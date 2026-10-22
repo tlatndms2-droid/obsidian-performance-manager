@@ -16,7 +16,7 @@ function installWindow(modal){
     const edge=e.target.closest('.pm-window-edge')?.dataset.edge,divider=e.target.closest('.pm-group-divider');
     // Native scrollbars must retain pointer input instead of starting a window drag.
     if(!edge&&!divider&&e.target.scrollHeight>e.target.clientHeight&&e.clientX>=e.target.getBoundingClientRect().left+e.target.clientWidth)return;
-    if(!edge&&!divider&&e.target.closest('button,input,select,textarea,a,.pm-group-plugin-row,.pm-group-nav-item,.pm-group-note,.pm-group-error,.pm-group-picker,.pm-hide-disabled-control,.modal-close-button'))return;
+    if(!edge&&!divider&&e.target.closest('button,input,select,textarea,a,.pm-group-plugin-row,.pm-group-nav-item,.pm-group-note,.pm-group-error,.pm-group-picker,.modal-close-button'))return;
     if(!edge&&!divider&&win.getSelection()?.toString())return;
     const start=rect(),x=e.clientX,y=e.clientY,side=modal.contentEl.querySelector('.pm-group-sidebar'),initial=side.getBoundingClientRect().width;
     cleanup();e.preventDefault();el.classList.add('pm-window-dragging');

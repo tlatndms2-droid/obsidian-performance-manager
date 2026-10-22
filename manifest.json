@@ -1,7 +1,7 @@
 {
   "id": "obsidian-performance-manager",
   "name": "Performance Manager",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minAppVersion": "1.8.0",
   "description": "사용 중 플러그인별 처리 시간을 측정하고 많이 쓴 순서로 확인합니다. 데스크톱 전용 샘플링 진단 도구입니다.",
   "author": "tlatn",

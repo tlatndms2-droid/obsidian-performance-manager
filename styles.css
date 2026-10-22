@@ -69,6 +69,7 @@
 .pm-group-main{flex:1;min-width:0;display:flex;flex-direction:column;padding:4px 0 0 18px;gap:12px}
 .pm-group-search{width:100%;flex:none}
 .pm-group-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:none;font-size:var(--font-ui-small)}
+.pm-hide-disabled-control{display:flex;align-items:center;gap:8px;margin-left:auto;font-size:var(--font-ui-small);white-space:nowrap}
 .pm-group-toolbar select{max-width:180px}
 .pm-group-list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .pm-group-plugin-row{display:flex;align-items:center;gap:12px;border-top:1px solid var(--background-modifier-border);padding:12px 2px}

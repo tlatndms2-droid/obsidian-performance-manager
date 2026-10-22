@@ -1,4 +1,4 @@
-const {Modal,Setting,Menu,Notice,PluginSettingTab}=require('obsidian');
+const {Modal,Setting,Menu,Notice,PluginSettingTab,ToggleComponent}=require('obsidian');
 const {selectRange,installWindow}=require('./group-window.cjs');
 const run=async fn=>{try{await fn();}catch(e){new Notice(String(e.message||e));}};
 function action(parent,text,fn,cls=''){const b=parent.createEl('button',{text,cls});b.onclick=()=>run(fn);return b;}
@@ -25,7 +25,9 @@ class GroupsModal extends Modal{
     const root=this.contentEl;root.empty();root.addClass('pm-groups-content');const side=root.createDiv({cls:'pm-group-sidebar'});side.style.flexBasis=this.sideWidth+'px';const divider=root.createDiv({cls:'pm-group-divider',attr:{role:'separator','aria-label':'그룹 목록 너비 조절','aria-orientation':'vertical',tabindex:'0'}}),main=root.createDiv({cls:'pm-group-main'});
     divider.onkeydown=e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();this.sideWidth=Math.max(130,Math.min(this.sideWidth+(e.key==='ArrowRight'?10:-10),this.modalEl.clientWidth-300));side.style.flexBasis=this.sideWidth+'px';this.plugin.groupWindow={...(this.plugin.groupWindow||{}),side:this.sideWidth};this.plugin.persist();};
     const manifests=Object.values(this.app.plugins.manifests).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
-    for(const id of this.checked)if(!this.app.plugins.manifests[id])this.checked.delete(id);
+    const hideDisabled=!!this.plugin.groupView?.hideDisabled;
+    for(const id of this.checked)if(!this.app.plugins.manifests[id]||(hideDisabled&&!this.app.plugins.plugins[id]))this.checked.delete(id);
+    if(hideDisabled&&this.anchor&&!this.app.plugins.plugins[this.anchor])this.anchor=null;
     side.createEl('h3',{text:'그룹'});
     const groupSearch=side.createEl('input',{type:'search',placeholder:'그룹 검색…',cls:'pm-group-filter',attr:{'aria-label':'그룹 검색'}});groupSearch.value=this.groupQuery;groupSearch.oninput=()=>{this.groupQuery=groupSearch.value;this.render();this.contentEl.querySelector('.pm-group-filter').focus();};
     const choose=(id,name,count,group)=>{
@@ -45,10 +47,13 @@ class GroupsModal extends Modal{
       action(toolbar,'그룹에 추가',()=>new GroupPickerModal(this).open(),'mod-cta').disabled=!this.checked.size||store.busy||!store.groups.length;
       if(this.selectedGroup!=='all'&&this.selectedGroup!=='none')action(toolbar,'그룹에서 빼기',async()=>{await store.assign([...this.checked].filter(id=>store.groupFor(id)?.id===this.selectedGroup),null);this.checked.clear();this.anchor=null;this.render();}).disabled=!this.checked.size||store.busy;
     }
+    const filter=toolbar.createDiv({cls:'pm-hide-disabled-control'});filter.createSpan({text:'꺼진 플러그인 숨기기'});
+    new ToggleComponent(filter).setValue(hideDisabled).setDisabled(store.busy).onChange(value=>{this.plugin.groupView={hideDisabled:value};this.render();this.contentEl.querySelector('.pm-hide-disabled-control .checkbox-container')?.focus({preventScroll:true});run(()=>this.plugin.persist());}).toggleEl.setAttribute('aria-label','꺼진 플러그인 숨기기');
+    filter.title='목록 표시만 바꿉니다. 그룹 소속과 플러그인의 켜짐 상태는 바뀌지 않습니다.';
     if(store.error||this.plugin.saveError)main.createDiv({cls:'pm-group-error',text:store.error||this.plugin.saveError,attr:{role:'alert'}});
     if(store.busy)main.createDiv({text:'플러그인 상태를 변경하고 있습니다…',attr:{role:'status'}});
     const list=main.createDiv({cls:'pm-group-list'});
-    const shown=manifests.filter(m=>(this.selectedGroup==='all'||(this.selectedGroup==='none'?!store.groupFor(m.id):store.groupFor(m.id)?.id===this.selectedGroup))&&[m.name,m.description,m.author].some(v=>String(v||'').toLowerCase().includes(this.query.toLowerCase())));
+    const shown=manifests.filter(m=>(!hideDisabled||!!this.app.plugins.plugins[m.id])&&(this.selectedGroup==='all'||(this.selectedGroup==='none'?!store.groupFor(m.id):store.groupFor(m.id)?.id===this.selectedGroup))&&[m.name,m.description,m.author].some(v=>String(v||'').toLowerCase().includes(this.query.toLowerCase())));
     for(const m of shown){
       const row=list.createDiv({cls:'pm-group-plugin-row',attr:{'data-pm-plugin-id':m.id}});
       if(this.editing){const check=row.createEl('input',{type:'checkbox',attr:{'aria-label':m.name+' 선택'}});check.checked=this.checked.has(m.id);check.disabled=store.busy;check.onclick=e=>{const selection=selectRange(this.checked,shown.map(x=>x.id),this.anchor,m.id,e.shiftKey,check.checked);this.checked=selection.checked;this.anchor=selection.anchor;this.render();this.contentEl.querySelector('[data-pm-plugin-id="'+m.id+'"]>input')?.focus({preventScroll:true});};}

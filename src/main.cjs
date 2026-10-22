@@ -80,7 +80,7 @@ module.exports=class PerformanceManager extends Plugin {
     this.modals=new Set();this.last=null;this.saveError=null;this.saveQueue=Promise.resolve();
     const data=await this.loadData();if(data?.last?.schema===1&&data.last.total&&Array.isArray(data.last.catalog))this.last=data.last;
     this.overlaySettings={shown:!!data?.overlay?.shown,box:data?.overlay?.box||{}};
-    this.groupWindow=data?.groupWindow||{};this.groupModals=new Set();this.groupTransaction=data?.groupTransaction||null;this.groupStore=new GroupStore(this,data?.groupState);
+    this.groupWindow=data?.groupWindow||{};this.groupView={hideDisabled:!!data?.groupView?.hideDisabled};this.groupModals=new Set();this.groupTransaction=data?.groupTransaction||null;this.groupStore=new GroupStore(this,data?.groupState);
     this.recorder=new Recorder({
       getDebugger:()=>{if(!Platform.isDesktopApp)throw new Error('데스크톱 Obsidian에서만 측정할 수 있습니다.');return require('@electron/remote').getCurrentWebContents().debugger;},
       catalog:()=>this.catalog(),
@@ -106,7 +106,7 @@ module.exports=class PerformanceManager extends Plugin {
     const manager=this.app.plugins;
     return Object.values(manager?.manifests||{}).map(m=>({id:m.id,name:m.name||m.id,version:m.version||'',enabled:!!manager.enabledPlugins?.has(m.id),loaded:!!manager.plugins?.[m.id]}));
   }
-  persist(){this.saveQueue=this.saveQueue.catch(()=>{}).then(async()=>{try{await this.saveData({last:this.last,overlay:this.overlaySettings,groupState:this.groupStore?.snapshot(),groupWindow:this.groupWindow,groupTransaction:this.groupTransaction});this.saveError=null;}catch{this.saveError='측정 결과 또는 설정을 저장하지 못했습니다.';}});return this.saveQueue;}
+  persist(){this.saveQueue=this.saveQueue.catch(()=>{}).then(async()=>{try{await this.saveData({last:this.last,overlay:this.overlaySettings,groupState:this.groupStore?.snapshot(),groupWindow:this.groupWindow,groupView:this.groupView,groupTransaction:this.groupTransaction});this.saveError=null;}catch{this.saveError='측정 결과 또는 설정을 저장하지 못했습니다.';}});return this.saveQueue;}
   openGroups(){if(!this.groupModals.size)new GroupsModal(this).open();}
   groupChanged(){for(const modal of this.groupModals)modal.render();this.nativeGroups?.refresh();this.refreshOverlays();}
   openPluginMenu(manifest,anchor,modal){

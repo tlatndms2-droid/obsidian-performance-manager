@@ -46,28 +46,27 @@ class GroupsModal extends Modal{
   }
   render(){
     const oldScroll=this.contentEl.querySelector('.pm-group-list')?.scrollTop||0;
-    const store=this.plugin.groupStore;if(!['all','none','enabled','disabled'].includes(this.selectedGroup)&&!store.groups.some(g=>g.id===this.selectedGroup))this.selectedGroup='all';
+    const store=this.plugin.groupStore;if(!['all','none','disabled'].includes(this.selectedGroup)&&!store.groups.some(g=>g.id===this.selectedGroup))this.selectedGroup='all';
     const root=this.contentEl;root.empty();root.addClass('pm-groups-content');const side=root.createDiv({cls:'pm-group-sidebar'});side.style.flexBasis=this.sideWidth+'px';const divider=root.createDiv({cls:'pm-group-divider',attr:{role:'separator','aria-label':'그룹 목록 너비 조절','aria-orientation':'vertical',tabindex:'0'}}),main=root.createDiv({cls:'pm-group-main'});
     divider.onkeydown=e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();this.sideWidth=Math.max(130,Math.min(this.sideWidth+(e.key==='ArrowRight'?10:-10),this.modalEl.clientWidth-300));side.style.flexBasis=this.sideWidth+'px';this.plugin.groupWindow={...(this.plugin.groupWindow||{}),side:this.sideWidth};this.plugin.persist();};
     const manifests=Object.values(this.app.plugins.manifests).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
-    const disabledView=this.selectedGroup==='disabled',enabledView=this.selectedGroup==='enabled';
-    const matchesState=id=>(!enabledView||!!this.app.plugins.plugins[id])&&(!disabledView||!this.app.plugins.plugins[id]);
+    const disabledView=this.selectedGroup==='disabled';
+    const matchesState=id=>disabledView?!this.app.plugins.plugins[id]:!!this.app.plugins.plugins[id];
     for(const id of this.checked)if(!this.app.plugins.manifests[id]||!matchesState(id))this.checked.delete(id);
     if(this.anchor&&!matchesState(this.anchor))this.anchor=null;
     side.createEl('h3',{text:'그룹'});
     const groupSearch=side.createEl('input',{type:'search',placeholder:'그룹 검색…',cls:'pm-group-filter',attr:{'aria-label':'그룹 검색'}});groupSearch.value=this.groupQuery;groupSearch.oninput=()=>{this.groupQuery=groupSearch.value;this.render();this.contentEl.querySelector('.pm-group-filter').focus();};
     const choose=(id,name,count,group)=>{
       const block=side.createDiv({cls:'pm-group-nav-item'+(this.selectedGroup===id?' is-selected':'')});
-      if(this.editing&&!['all','enabled','disabled'].includes(id))this.prepareDrop(block,id==='none'?null:id);
+      if(this.editing&&!['all','disabled'].includes(id))this.prepareDrop(block,id==='none'?null:id);
       const b=action(block,name+' ('+count+')',()=>{this.selectedGroup=id;this.anchor=null;this.render();},'pm-group-select');b.setAttribute('aria-pressed',String(this.selectedGroup===id));
       if(group){const controls=block.createDiv({cls:'pm-group-nav-actions'});groupToggle(controls,this.plugin,group);if(id==='none')return;const more=action(controls,'⋮',()=>{const menu=new Menu();menu.addItem(i=>i.setTitle('이름 변경').setIcon('pencil').onClick(()=>new GroupNameModal(this.plugin,group).open()));menu.addItem(i=>i.setTitle('그룹 삭제').setIcon('trash').onClick(()=>new DeleteGroupModal(this.plugin,group).open()));menu.showAtMouseEvent(this.menuEvent||{clientX:more.getBoundingClientRect().left,clientY:more.getBoundingClientRect().bottom});});more.setAttribute('aria-label',group.name+' 그룹 옵션');}
     };
-    choose('all','전체 플러그인',manifests.length);
-    choose('enabled','켜진 플러그인',manifests.filter(m=>!!this.app.plugins.plugins[m.id]).length);
+    choose('all','전체 플러그인',manifests.filter(m=>!!this.app.plugins.plugins[m.id]).length);
     choose('disabled','꺼진 플러그인',manifests.filter(m=>!this.app.plugins.plugins[m.id]).length);
-    for(const group of store.groups)if(group.name.toLowerCase().includes(this.groupQuery.toLowerCase()))choose(group.id,group.name,group.pluginIds.filter(id=>this.app.plugins.manifests[id]).length,group);
+    for(const group of store.groups)if(group.name.toLowerCase().includes(this.groupQuery.toLowerCase()))choose(group.id,group.name,group.pluginIds.filter(id=>this.app.plugins.manifests[id]&&this.app.plugins.plugins[id]).length,group);
     const ungrouped=manifests.filter(m=>!store.groupFor(m.id));
-    choose('none','그룹 없음',ungrouped.length,{id:'none',name:'그룹 없음',pluginIds:ungrouped.map(m=>m.id)});
+    choose('none','그룹 없음',ungrouped.filter(m=>!!this.app.plugins.plugins[m.id]).length,{id:'none',name:'그룹 없음',pluginIds:ungrouped.map(m=>m.id)});
     action(side,'+ 그룹 만들기',()=>new GroupNameModal(this.plugin).open(),'pm-group-create').disabled=store.busy;
     const search=main.createEl('input',{type:'search',placeholder:'플러그인 검색…',cls:'pm-group-search',attr:{'aria-label':'플러그인 검색'}});search.value=this.query;
     search.oninput=()=>{const position=search.selectionStart;this.query=search.value;this.render();const next=this.contentEl.querySelector('.pm-group-search');next.focus();try{next.setSelectionRange(position,position);}catch{}};
@@ -75,12 +74,12 @@ class GroupsModal extends Modal{
     action(toolbar,this.editing?'완료':'수정',()=>{this.editing=!this.editing;this.checked.clear();this.anchor=null;this.render();},'pm-group-edit').disabled=store.busy;
     if(this.editing){toolbar.createSpan({text:this.checked.size+'개 선택됨',cls:'pm-selection-count'});
       action(toolbar,'그룹에 추가',()=>new GroupPickerModal(this).open(),'mod-cta').disabled=!this.checked.size||store.busy||!store.groups.length;
-      if(!['all','none','enabled','disabled'].includes(this.selectedGroup))action(toolbar,'그룹에서 빼기',async()=>{await store.assign([...this.checked].filter(id=>store.groupFor(id)?.id===this.selectedGroup),null);this.checked.clear();this.anchor=null;this.render();}).disabled=!this.checked.size||store.busy;
+      if(!['all','none','disabled'].includes(this.selectedGroup))action(toolbar,'그룹에서 빼기',async()=>{await store.assign([...this.checked].filter(id=>store.groupFor(id)?.id===this.selectedGroup),null);this.checked.clear();this.anchor=null;this.render();}).disabled=!this.checked.size||store.busy;
     }
     if(store.error||this.plugin.saveError)main.createDiv({cls:'pm-group-error',text:store.error||this.plugin.saveError,attr:{role:'alert'}});
     if(store.busy)main.createDiv({text:'플러그인 상태를 변경하고 있습니다…',attr:{role:'status'}});
     const list=main.createDiv({cls:'pm-group-list'});
-    const shown=manifests.filter(m=>matchesState(m.id)&&(['all','enabled','disabled'].includes(this.selectedGroup)||(this.selectedGroup==='none'?!store.groupFor(m.id):store.groupFor(m.id)?.id===this.selectedGroup))&&[m.name,m.description,m.author].some(v=>String(v||'').toLowerCase().includes(this.query.toLowerCase())));
+    const shown=manifests.filter(m=>matchesState(m.id)&&(['all','disabled'].includes(this.selectedGroup)||(this.selectedGroup==='none'?!store.groupFor(m.id):store.groupFor(m.id)?.id===this.selectedGroup))&&[m.name,m.description,m.author].some(v=>String(v||'').toLowerCase().includes(this.query.toLowerCase())));
     for(const m of shown){
       const row=list.createDiv({cls:'pm-group-plugin-row',attr:{'data-pm-plugin-id':m.id}});
       if(this.editing)this.prepareDrag(row,m.id);
@@ -91,7 +90,7 @@ class GroupsModal extends Modal{
       s.addExtraButton(b=>b.setIcon('more-vertical').setTooltip(m.name+' 옵션').onClick(()=>this.plugin.openPluginMenu(m,b.extraSettingsEl,this)));
       s.addToggle(t=>{t.setValue(!!this.app.plugins.plugins[m.id]).setDisabled(store.busy||m.id===this.plugin.manifest.id).onChange(enabled=>run(()=>store.apply([m.id],enabled)));if(m.id===this.plugin.manifest.id)t.toggleEl.setAttribute('aria-label','Performance Manager는 항상 켜짐');});
     }
-    if(!shown.length)list.createDiv({cls:'pm-group-empty',text:!this.query&&disabledView?'꺼진 플러그인이 없습니다.':!this.query&&enabledView?'켜진 플러그인이 없습니다.':'표시할 플러그인이 없습니다.'});list.scrollTop=oldScroll;
+    if(!shown.length)list.createDiv({cls:'pm-group-empty',text:!this.query&&disabledView?'꺼진 플러그인이 없습니다.':!this.query?'켜진 플러그인이 없습니다.':'표시할 플러그인이 없습니다.'});list.scrollTop=oldScroll;
     main.createDiv({cls:'pm-group-note',text:this.editing?'클릭·Shift로 선택 · 행을 왼쪽 그룹으로 끌어 이동 (선택한 행은 함께 이동). 켜짐 상태는 바뀌지 않습니다.':'수정을 누르면 플러그인을 선택하여 그룹에 넣거나 뺄 수 있습니다.'});
   }
 }

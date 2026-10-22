@@ -1,6 +1,7 @@
 const {Plugin,Modal,Notice,Platform}=require('obsidian');
 const {Recorder}=require('./recorder.cjs');
 const {emptyTotals}=require('./profile.cjs');
+const {OverlayManager}=require('./overlay.cjs');
 const format=ms=>new Intl.NumberFormat('ko-KR',{maximumFractionDigits:1}).format(ms)+' ms';
 
 class RuntimeModal extends Modal {
@@ -73,27 +74,34 @@ class RuntimeModal extends Modal {
 
 module.exports=class PerformanceManager extends Plugin {
   async onload(){
-    this.modals=new Set();this.last=null;this.saveError=null;
+    this.modals=new Set();this.last=null;this.saveError=null;this.saveQueue=Promise.resolve();
     const data=await this.loadData();if(data?.last?.schema===1&&data.last.total&&Array.isArray(data.last.catalog))this.last=data.last;
+    this.overlaySettings={shown:!!data?.overlay?.shown,box:data?.overlay?.box||{}};
     this.recorder=new Recorder({
       getDebugger:()=>{if(!Platform.isDesktopApp)throw new Error('데스크톱 Obsidian에서만 측정할 수 있습니다.');return require('@electron/remote').getCurrentWebContents().debugger;},
       catalog:()=>this.catalog(),
       onUpdate:()=>this.refresh(),
-      onFinish:async result=>{this.last=result;try{await this.saveData({last:result});this.saveError=null;}catch{this.saveError='마지막 결과를 저장하지 못했습니다.';}this.refresh();}
+      onFinish:async result=>{this.last=result;await this.persist();this.refresh();}
     });
     this.addRibbonIcon('gauge','플러그인 처리 시간',()=>this.openResults());
     this.addCommand({id:'open-plugin-runtime',name:'플러그인 처리 시간 보기',callback:()=>this.openResults()});
     this.addCommand({id:'start-plugin-runtime',name:'플러그인 처리 시간 측정 시작',callback:()=>this.start()});
     this.addCommand({id:'stop-plugin-runtime',name:'플러그인 처리 시간 측정 종료',callback:()=>this.stop()});
-    this.register(()=>{this.recorder.dispose();for(const modal of [...this.modals])modal.close();});
+    this.overlays=new OverlayManager(this);
+    this.app.workspace.onLayoutReady(()=>{if(this._loaded)this.overlays.sync();});
+    this.registerEvent(this.app.workspace.on('layout-change',()=>this.overlays.sync()));
+    this.registerEvent(this.app.workspace.on('active-leaf-change',()=>this.overlays.sync()));
+    this.register(()=>{this.recorder.dispose();this.overlays.destroy();for(const modal of [...this.modals])modal.close();});
   }
   catalog(){
     const manager=this.app.plugins;
     return Object.values(manager?.manifests||{}).map(m=>({id:m.id,name:m.name||m.id,version:m.version||'',enabled:!!manager.enabledPlugins?.has(m.id),loaded:!!manager.plugins?.[m.id]}));
   }
-  refresh(){for(const modal of this.modals)modal.render();}
+  persist(){this.saveQueue=this.saveQueue.catch(()=>{}).then(async()=>{try{await this.saveData({last:this.last,overlay:this.overlaySettings});this.saveError=null;}catch{this.saveError='측정 결과 또는 오버레이 설정을 저장하지 못했습니다.';}});return this.saveQueue;}
+  refreshOverlays(){this.overlays?.render();}
+  refresh(){for(const modal of this.modals)modal.render();this.refreshOverlays();}
   openResults(){if(this.modals.size){[...this.modals][0].render();return;}new RuntimeModal(this.app,this).open();}
-  async start(){try{await this.recorder.start();if(!this.modals.size)this.openResults();}catch(e){new Notice('측정 시작 실패: '+String(e.message||e));this.refresh();}}
+  async start(openModal=true){try{await this.recorder.start();if(openModal&&!this.modals.size)this.openResults();}catch(e){new Notice('측정 시작 실패: '+String(e.message||e));this.refresh();}}
   async stop(){await this.recorder.stop();}
   textReport(result){
     const t=result.total;const names=new Map(result.catalog.map(p=>[p.id,p.name]));

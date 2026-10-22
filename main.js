@@ -478,7 +478,7 @@ class NativeGroups {
     this.tab=this.plugin.app.setting?.findTabById?.('community-plugins');if(!this.tab)return;
     const schedule=()=>this.schedule();this.hook(this.tab,'display',schedule);this.hook(this.tab,'update',schedule);this.hook(this.tab,'renderInstalledPlugin',schedule);
     this.hook(this.tab,'hide',()=>{this.observer?.disconnect();this.cancelFrame();});
-    for(const key of ['enablePluginAndSave','disablePluginAndSave'])this.hook(this.plugin.app.plugins,key,()=>{if(this.plugin._loaded&&!this.plugin.groupStore.busy)this.plugin.groupChanged();});
+    for(const key of ['enablePluginAndSave','disablePluginAndSave','uninstallPlugin'])this.hook(this.plugin.app.plugins,key,()=>{if(this.plugin._loaded&&!this.plugin.groupStore.busy)this.plugin.groupChanged();});
     if(this.plugin.app.setting.activeTab===this.tab)this.schedule();
   }
   cancelFrame(){if(this.frame!==null)this.frameWindow?.cancelAnimationFrame(this.frame);this.frame=null;}
@@ -639,6 +639,15 @@ module.exports=class PerformanceManager extends Plugin {
   groupChanged(){for(const modal of this.groupModals)modal.render();this.nativeGroups?.refresh();this.refreshOverlays();}
   openPluginMenu(manifest,anchor,modal){
     const menu=new Menu();const settings=this.app.setting;
+    const community=settings.findTabById?.('community-plugins');
+    if(typeof community?.buildPluginActionsMenu==='function'){
+      community.buildPluginActionsMenu(menu,manifest);
+      for(const item of menu.items){
+        const callback=item.callback;if(typeof callback!=='function')continue;
+        if(item.section==='info')item.onClick(event=>{modal.close();settings.open();return callback(event);});
+      }
+      const rect=anchor.getBoundingClientRect();menu.showAtPosition({x:rect.left,y:rect.bottom});return;
+    }
     if(settings.pluginTabs?.some(t=>t.id===manifest.id))menu.addItem(i=>i.setTitle('설정').setIcon('settings').onClick(()=>{modal.close();settings.open();settings.openTabById(manifest.id);}));
     if(Object.keys(this.app.commands.commands).some(id=>id.startsWith(manifest.id+':')))menu.addItem(i=>i.setTitle('단축키').setIcon('keyboard').onClick(()=>{modal.close();settings.open();const tab=settings.openTabById('hotkeys');tab?.setQuery?.(manifest.id);}));
     if(!settings.pluginTabs?.some(t=>t.id===manifest.id)&&!Object.keys(this.app.commands.commands).some(id=>id.startsWith(manifest.id+':')))menu.addItem(i=>i.setTitle('설정·단축키가 없는 플러그인입니다').setDisabled(true));

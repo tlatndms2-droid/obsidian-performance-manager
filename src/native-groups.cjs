@@ -10,7 +10,7 @@ class NativeGroups {
     this.tab=this.plugin.app.setting?.findTabById?.('community-plugins');if(!this.tab)return;
     const schedule=()=>this.schedule();this.hook(this.tab,'display',schedule);this.hook(this.tab,'update',schedule);this.hook(this.tab,'renderInstalledPlugin',schedule);
     this.hook(this.tab,'hide',()=>{this.observer?.disconnect();this.cancelFrame();});
-    for(const key of ['enablePluginAndSave','disablePluginAndSave'])this.hook(this.plugin.app.plugins,key,()=>{if(this.plugin._loaded&&!this.plugin.groupStore.busy)this.plugin.groupChanged();});
+    for(const key of ['enablePluginAndSave','disablePluginAndSave','uninstallPlugin'])this.hook(this.plugin.app.plugins,key,()=>{if(this.plugin._loaded&&!this.plugin.groupStore.busy)this.plugin.groupChanged();});
     if(this.plugin.app.setting.activeTab===this.tab)this.schedule();
   }
   cancelFrame(){if(this.frame!==null)this.frameWindow?.cancelAnimationFrame(this.frame);this.frame=null;}

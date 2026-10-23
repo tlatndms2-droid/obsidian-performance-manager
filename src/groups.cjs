@@ -1,11 +1,13 @@
 class GroupStore {
   constructor(plugin,data={}){
-    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};this.treeCollapsed=data.treeCollapsed||{};
+    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};this.treeCollapsed=data.treeCollapsed||{};this.hideSubgroupPlugins=!!data.hideSubgroupPlugins;
     const assigned=new Set(),ids=new Set();
     this.groups=(Array.isArray(data.groups)?data.groups:[]).filter(g=>g&&typeof g.id==='string'&&typeof g.name==='string'&&!ids.has(g.id)&&ids.add(g.id)).map(g=>{const pluginIds=(Array.isArray(g.pluginIds)?g.pluginIds:[]).filter(id=>typeof id==='string'&&!assigned.has(id)&&assigned.add(id));return {id:g.id,name:g.name,parentId:typeof g.parentId==='string'?g.parentId:null,pluginIds,rememberedEnabled:Object.fromEntries(pluginIds.filter(id=>typeof g.rememberedEnabled?.[id]==='boolean').map(id=>[id,g.rememberedEnabled[id]]))};});
     const parents=new Map(this.groups.map(g=>[g.id,g.parentId]));for(const g of this.groups)if(g.parentId===g.id||!parents.has(g.parentId)||parents.get(g.parentId))g.parentId=null;
   }
-  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed,treeCollapsed:this.treeCollapsed}));}
+  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed,treeCollapsed:this.treeCollapsed,hideSubgroupPlugins:this.hideSubgroupPlugins}));}
+  async setHideSubgroupPlugins(value){await this.edit(()=>{this.hideSubgroupPlugins=!!value;});}
+  isManagerVisible(view,id){return this.isVisible(view,id)&&!(this.hideSubgroupPlugins&&this.groupFor(id)?.parentId===view);}
   roots(){return this.groups.filter(g=>!g.parentId);}
   children(id){return this.groups.filter(g=>g.parentId===id);}
   orderedGroups(){return this.roots().flatMap(g=>[g,...this.children(g.id)]);}
@@ -26,7 +28,7 @@ class GroupStore {
     if(this.busy)throw new Error('플러그인 전환이 끝난 후 수정하세요.');
     if(this.plugin.groupTransaction?.before)throw new Error('이전 전환 복구를 먼저 완료해야 합니다.');
     const previous=this.snapshot();this.busy=true;
-    try{fn();await this.save();}catch(e){this.groups=previous.groups;this.collapsed=previous.collapsed;this.treeCollapsed=previous.treeCollapsed;throw e;}finally{this.busy=false;this.changed();}
+    try{fn();await this.save();}catch(e){this.groups=previous.groups;this.collapsed=previous.collapsed;this.treeCollapsed=previous.treeCollapsed;this.hideSubgroupPlugins=previous.hideSubgroupPlugins;throw e;}finally{this.busy=false;this.changed();}
   }
   async create(name,parentId=null){
     name=name.trim();if(!name)throw new Error('그룹 이름을 입력하세요.');

@@ -118,3 +118,14 @@ test('flat migration and malformed parent references never alter plugin ownershi
  const {p,calls}=setup();const s=new GroupStore(p,{groups:[{id:'x',name:'X',parentId:'y',pluginIds:['a']},{id:'y',name:'Y',parentId:'x',pluginIds:['b']},{id:'z',name:'Z',parentId:'missing',pluginIds:['c']}]});
  assert.equal(s.roots().length,3);assert.equal(s.groupFor('a').id,'x');assert.equal(s.groupFor('b').id,'y');await s.initializeMemory();assert.equal(calls.length,0);
 });
+
+test('hiding subgroup entries only filters the parent manager view',async()=>{
+ const {s,calls}=setup();const root=await s.create('Root'),child=await s.create('Child',root);await s.assign(['a'],root);await s.assign(['b'],child);
+ const groups=JSON.stringify(s.groups),memory=s.memory();assert.ok(s.isManagerVisible(root,'b'));await s.setHideSubgroupPlugins(true);
+ assert.ok(s.isManagerVisible(root,'a'));assert.ok(!s.isManagerVisible(root,'b'));assert.ok(s.isManagerVisible(child,'b'));assert.ok(s.isVisible(root,'b'));assert.deepEqual(s.members(root),['a','b']);assert.equal(JSON.stringify(s.groups),groups);assert.deepEqual(s.memory(),memory);assert.equal(calls.length,0);
+ const reload=new GroupStore(s.plugin,s.snapshot());assert.ok(reload.hideSubgroupPlugins);assert.ok(!reload.isManagerVisible(root,'b'));await s.setHideSubgroupPlugins(false);assert.ok(s.isManagerVisible(root,'b'));
+});
+test('failed display preference persistence restores the previous value',async()=>{
+ const {s,p}=setup();assert.equal(s.hideSubgroupPlugins,false);p.persist=async()=>{throw Error('disk failure');};
+ await assert.rejects(s.setHideSubgroupPlugins(true),/disk/);assert.equal(s.hideSubgroupPlugins,false);
+});

@@ -71,6 +71,10 @@
 .pm-group-tree-children{margin-left:14px;padding-left:10px;border-left:1px solid var(--background-modifier-border)}
 .pm-group-nest-target{outline:2px solid var(--interactive-accent);outline-offset:-2px;background:var(--background-modifier-hover)}
 .pm-group-breadcrumb{font-size:var(--font-ui-small);color:var(--text-muted);padding-bottom:4px;border-bottom:1px solid var(--background-modifier-border)}
+.pm-group-view-filter.setting-item{padding:0;margin:0 0 0 auto;border:0;gap:8px}
+.pm-group-view-filter .setting-item-info{margin:0}
+.pm-group-view-filter .setting-item-name{font-size:var(--font-ui-small)}
+.pm-group-view-filter .setting-item-control{padding:0}
 .pm-native-group-body>.pm-native-group{margin-left:16px;border-left:1px solid var(--background-modifier-border);padding-left:8px}
 .pm-group-nav-item[data-pm-group-order-id]{position:relative}
 .pm-group-nav-item[data-pm-group-order-id] .pm-group-select{cursor:grab}

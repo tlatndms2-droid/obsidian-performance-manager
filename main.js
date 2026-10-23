@@ -1,4 +1,4 @@
-/* Performance Manager 0.2.7 */
+/* Performance Manager 0.2.8 */
 (function(nativeRequire){
 const factories={"./profile.cjs": function(module,exports,require){
 const SYSTEM = new Set(['(idle)', '(program)', '(root)', '(garbage collector)']);
@@ -274,12 +274,14 @@ module.exports={OverlayManager,fitBox,dragBox,resizeBox};
 "./groups.cjs": function(module,exports,require){
 class GroupStore {
   constructor(plugin,data={}){
-    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};this.treeCollapsed=data.treeCollapsed||{};
+    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};this.treeCollapsed=data.treeCollapsed||{};this.hideSubgroupPlugins=!!data.hideSubgroupPlugins;
     const assigned=new Set(),ids=new Set();
     this.groups=(Array.isArray(data.groups)?data.groups:[]).filter(g=>g&&typeof g.id==='string'&&typeof g.name==='string'&&!ids.has(g.id)&&ids.add(g.id)).map(g=>{const pluginIds=(Array.isArray(g.pluginIds)?g.pluginIds:[]).filter(id=>typeof id==='string'&&!assigned.has(id)&&assigned.add(id));return {id:g.id,name:g.name,parentId:typeof g.parentId==='string'?g.parentId:null,pluginIds,rememberedEnabled:Object.fromEntries(pluginIds.filter(id=>typeof g.rememberedEnabled?.[id]==='boolean').map(id=>[id,g.rememberedEnabled[id]]))};});
     const parents=new Map(this.groups.map(g=>[g.id,g.parentId]));for(const g of this.groups)if(g.parentId===g.id||!parents.has(g.parentId)||parents.get(g.parentId))g.parentId=null;
   }
-  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed,treeCollapsed:this.treeCollapsed}));}
+  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed,treeCollapsed:this.treeCollapsed,hideSubgroupPlugins:this.hideSubgroupPlugins}));}
+  async setHideSubgroupPlugins(value){await this.edit(()=>{this.hideSubgroupPlugins=!!value;});}
+  isManagerVisible(view,id){return this.isVisible(view,id)&&!(this.hideSubgroupPlugins&&this.groupFor(id)?.parentId===view);}
   roots(){return this.groups.filter(g=>!g.parentId);}
   children(id){return this.groups.filter(g=>g.parentId===id);}
   orderedGroups(){return this.roots().flatMap(g=>[g,...this.children(g.id)]);}
@@ -300,7 +302,7 @@ class GroupStore {
     if(this.busy)throw new Error('플러그인 전환이 끝난 후 수정하세요.');
     if(this.plugin.groupTransaction?.before)throw new Error('이전 전환 복구를 먼저 완료해야 합니다.');
     const previous=this.snapshot();this.busy=true;
-    try{fn();await this.save();}catch(e){this.groups=previous.groups;this.collapsed=previous.collapsed;this.treeCollapsed=previous.treeCollapsed;throw e;}finally{this.busy=false;this.changed();}
+    try{fn();await this.save();}catch(e){this.groups=previous.groups;this.collapsed=previous.collapsed;this.treeCollapsed=previous.treeCollapsed;this.hideSubgroupPlugins=previous.hideSubgroupPlugins;throw e;}finally{this.busy=false;this.changed();}
   }
   async create(name,parentId=null){
     name=name.trim();if(!name)throw new Error('그룹 이름을 입력하세요.');
@@ -513,7 +515,7 @@ class GroupsModal extends Modal{
     divider.onkeydown=e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();this.sideWidth=Math.max(130,Math.min(this.sideWidth+(e.key==='ArrowRight'?10:-10),this.modalEl.clientWidth-300));side.style.flexBasis=this.sideWidth+'px';this.plugin.groupWindow={...(this.plugin.groupWindow||{}),side:this.sideWidth};this.plugin.persist();};
     const manifests=Object.values(this.app.plugins.manifests).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
     const disabledView=this.selectedGroup==='disabled';
-    const matchesState=id=>disabledView?store.isVisible('disabled',id):!!store.groupFor(id)||store.isVisible('none',id);
+    const matchesState=id=>(disabledView?store.isVisible('disabled',id):!!store.groupFor(id)||store.isVisible('none',id))&&!(store.hideSubgroupPlugins&&store.groupFor(id)?.parentId===this.selectedGroup);
     for(const id of this.checked)if(!this.app.plugins.manifests[id]||!matchesState(id))this.checked.delete(id);
     if(this.anchor&&!matchesState(this.anchor))this.anchor=null;
     side.createEl('h3',{text:'그룹'});
@@ -552,11 +554,13 @@ class GroupsModal extends Modal{
       action(toolbar,'그룹에 추가',()=>new GroupPickerModal(this).open(),'mod-cta').disabled=!this.checked.size||store.busy||!store.groups.length;
       if(!['none','disabled'].includes(this.selectedGroup))action(toolbar,'그룹에서 빼기',async()=>{await store.assign([...this.checked].filter(id=>store.contains(this.selectedGroup,id)),null);this.checked.clear();this.anchor=null;this.render();}).disabled=!this.checked.size||store.busy;
     }
+    const hasChildren=!['none','disabled'].includes(this.selectedGroup)&&store.children(this.selectedGroup).length>0;
+    if(hasChildren){const filter=new Setting(toolbar).setName('하위 그룹 숨기기').addToggle(t=>{t.setValue(store.hideSubgroupPlugins).setDisabled(store.busy).onChange(value=>run(()=>store.setHideSubgroupPlugins(value)));t.toggleEl.setAttribute('aria-label','하위 그룹 숨기기');t.toggleEl.title='오른쪽 목록만 숨깁니다. 그룹 개수와 그룹 스위치는 하위 항목까지 포함합니다.';});filter.settingEl.addClass('pm-group-view-filter');}
     if(!['none','disabled'].includes(this.selectedGroup))main.createDiv({cls:'pm-group-breadcrumb',text:store.path(this.selectedGroup,' › ')});
     if(store.error||this.plugin.saveError)main.createDiv({cls:'pm-group-error',text:store.error||this.plugin.saveError,attr:{role:'alert'}});
     if(store.busy)main.createDiv({text:'플러그인 상태를 변경하고 있습니다…',attr:{role:'status'}});
     const list=main.createDiv({cls:'pm-group-list'});
-    const shown=manifests.filter(m=>store.isVisible(this.selectedGroup,m.id)&&[m.name,m.description,m.author].some(v=>String(v||'').toLowerCase().includes(this.query.toLowerCase())));
+    const shown=manifests.filter(m=>store.isManagerVisible(this.selectedGroup,m.id)&&[m.name,m.description,m.author].some(v=>String(v||'').toLowerCase().includes(this.query.toLowerCase())));
     for(const m of shown){
       const row=list.createDiv({cls:'pm-group-plugin-row',attr:{'data-pm-plugin-id':m.id}});
       if(this.editing)this.prepareDrag(row,m.id);
@@ -567,7 +571,7 @@ class GroupsModal extends Modal{
       s.addExtraButton(b=>b.setIcon('more-vertical').setTooltip(m.name+' 옵션').onClick(()=>this.plugin.openPluginMenu(m,b.extraSettingsEl,this)));
       s.addToggle(t=>{t.setValue(!!this.app.plugins.plugins[m.id]).setDisabled(store.busy||m.id===this.plugin.manifest.id).onChange(enabled=>run(()=>store.apply(this.editing&&this.checked.has(m.id)?[...this.checked]:[m.id],enabled)));if(m.id===this.plugin.manifest.id)t.toggleEl.setAttribute('aria-label','Performance Manager는 항상 켜짐');else t.toggleEl.title=this.editing&&this.checked.has(m.id)?'선택한 '+this.checked.size+'개 플러그인 함께 켜기·끄기':m.name+' 켜기·끄기';});
     }
-    if(!shown.length)list.createDiv({cls:'pm-group-empty',text:!this.query&&disabledView?'꺼진 플러그인이 없습니다.':!this.query&&this.selectedGroup==='none'?'그룹에 속하지 않은 켜진 플러그인이 없습니다.':'표시할 플러그인이 없습니다.'});list.scrollTop=oldScroll;
+    if(!shown.length)list.createDiv({cls:'pm-group-empty',text:!this.query&&hasChildren&&store.hideSubgroupPlugins?'이 그룹에 직접 속한 플러그인이 없습니다. 하위 그룹을 선택하거나 숨기기를 끄세요.':!this.query&&disabledView?'꺼진 플러그인이 없습니다.':!this.query&&this.selectedGroup==='none'?'그룹에 속하지 않은 켜진 플러그인이 없습니다.':'표시할 플러그인이 없습니다.'});list.scrollTop=oldScroll;
     main.createDiv({cls:'pm-group-note',text:this.editing?'선택한 항목 하나의 스위치로 선택 전체 켜기·끄기 · Shift로 구간 선택 · 왼쪽 그룹으로 드래그하면 소속만 이동':'수정을 누르면 플러그인을 선택하여 그룹 편집과 일괄 켜기·끄기를 할 수 있습니다.'});
   }
 }

@@ -19,7 +19,30 @@ class GroupsModal extends Modal{
   constructor(plugin){super(plugin.app);this.plugin=plugin;this.selectedGroup='none';this.checked=new Set();this.query='';this.groupQuery='';this.editing=false;this.anchor=null;this.sideWidth=plugin.groupWindow?.side||220;}
   onOpen(){this.modalEl.addClass('pm-groups-modal');this.titleEl.setText('플러그인 관리');this.plugin.groupModals.add(this);this.render();this.disposeWindow=installWindow(this);}
   onClose(){this.clearDrag();this.disposeWindow?.();this.plugin.groupModals.delete(this);}
-  clearDrag(){this.dragSession=null;this.dragBadge?.remove();this.dragBadge=null;this.modalEl.querySelectorAll('.pm-drop-target,.pm-plugin-dragging').forEach(el=>el.classList.remove('pm-drop-target','pm-plugin-dragging'));}
+  clearDrag(){this.dragSession=null;this.groupDragSession=null;this.dragBadge?.remove();this.dragBadge=null;this.modalEl.querySelectorAll('.pm-drop-target,.pm-plugin-dragging,.pm-group-order-dragging,.pm-group-insert-before,.pm-group-insert-after').forEach(el=>el.classList.remove('pm-drop-target','pm-plugin-dragging','pm-group-order-dragging','pm-group-insert-before','pm-group-insert-after'));}
+  prepareGroupDrag(block,group){
+    block.draggable=true;block.dataset.pmGroupOrderId=group.id;
+    let blocked=false;block.onpointerdown=e=>{blocked=!!e.target.closest('.pm-group-nav-actions,input,a');};
+    block.ondragstart=e=>{
+      if(blocked||this.plugin.groupStore.busy){e.preventDefault();return;}
+      this.clearDrag();this.groupDragSession={id:group.id,token:globalThis.crypto.randomUUID()};
+      e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('application/x-pm-group-order',this.groupDragSession.token);block.addClass('pm-group-order-dragging');
+    };
+    const accepts=e=>!this.plugin.groupStore.busy&&this.groupDragSession&&Array.from(e.dataTransfer?.types||[]).includes('application/x-pm-group-order');
+    const clearMarks=()=>this.modalEl.querySelectorAll('.pm-group-insert-before,.pm-group-insert-after').forEach(el=>el.classList.remove('pm-group-insert-before','pm-group-insert-after'));
+    const after=e=>e.clientY>block.getBoundingClientRect().top+block.getBoundingClientRect().height/2;
+    block.addEventListener('dragover',e=>{
+      if(!accepts(e))return;clearMarks();if(this.groupDragSession.id===group.id)return;
+      e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='move';block.addClass(after(e)?'pm-group-insert-after':'pm-group-insert-before');
+      const side=block.closest('.pm-group-sidebar'),rect=side.getBoundingClientRect();if(e.clientY<rect.top+32)side.scrollTop-=12;else if(e.clientY>rect.bottom-32)side.scrollTop+=12;
+    });
+    block.addEventListener('dragleave',e=>{if(!block.contains(e.relatedTarget))block.classList.remove('pm-group-insert-before','pm-group-insert-after');});
+    block.addEventListener('drop',e=>{
+      if(!accepts(e)||e.dataTransfer.getData('application/x-pm-group-order')!==this.groupDragSession.token)return;
+      e.preventDefault();e.stopPropagation();const id=this.groupDragSession.id,below=after(e);this.clearDrag();run(()=>this.plugin.groupStore.moveGroup(id,group.id,below));
+    });
+    block.ondragend=()=>this.clearDrag();
+  }
   prepareDrop(block,target){
     block.dataset.pmGroupTarget=target||'none';
     const accepts=e=>this.editing&&!this.plugin.groupStore.busy&&this.dragSession&&Array.from(e.dataTransfer?.types||[]).includes('application/x-pm-plugin-selection');
@@ -45,7 +68,7 @@ class GroupsModal extends Modal{
     row.ondragend=()=>this.clearDrag();
   }
   render(){
-    const oldScroll=this.contentEl.querySelector('.pm-group-list')?.scrollTop||0;
+    const oldScroll=this.contentEl.querySelector('.pm-group-list')?.scrollTop||0,oldSideScroll=this.contentEl.querySelector('.pm-group-sidebar')?.scrollTop||0;
     const store=this.plugin.groupStore;if(!['none','disabled'].includes(this.selectedGroup)&&!store.groups.some(g=>g.id===this.selectedGroup))this.selectedGroup='none';
     const root=this.contentEl;root.empty();root.addClass('pm-groups-content');const side=root.createDiv({cls:'pm-group-sidebar'});side.style.flexBasis=this.sideWidth+'px';const divider=root.createDiv({cls:'pm-group-divider',attr:{role:'separator','aria-label':'그룹 목록 너비 조절','aria-orientation':'vertical',tabindex:'0'}}),main=root.createDiv({cls:'pm-group-main'});
     divider.onkeydown=e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();this.sideWidth=Math.max(130,Math.min(this.sideWidth+(e.key==='ArrowRight'?10:-10),this.modalEl.clientWidth-300));side.style.flexBasis=this.sideWidth+'px';this.plugin.groupWindow={...(this.plugin.groupWindow||{}),side:this.sideWidth};this.plugin.persist();};
@@ -61,6 +84,7 @@ class GroupsModal extends Modal{
       if(this.editing&&id!=='disabled')this.prepareDrop(block,id==='none'?null:id);
       const b=action(block,group?name:name+' ('+count+')',()=>{this.selectedGroup=id;this.anchor=null;this.render();},'pm-group-select');b.setAttribute('aria-pressed',String(this.selectedGroup===id));
       if(group){const active=group.pluginIds.filter(id=>this.app.plugins.manifests[id]&&this.app.plugins.plugins[id]).length;const counts=b.createSpan({cls:'pm-group-counts',text:'전체 '+count+'개 / '});counts.createSpan({cls:active?'pm-group-active-count':'',text:'켜짐 '+active+'개'});}
+      if(group){this.prepareGroupDrag(block,group);b.title='드래그하여 그룹 순서 바꾸기';}
       if(group){const controls=block.createDiv({cls:'pm-group-nav-actions'});groupToggle(controls,this.plugin,group);if(id==='none')return;const more=action(controls,'⋮',()=>{const menu=new Menu();menu.addItem(i=>i.setTitle('이름 변경').setIcon('pencil').onClick(()=>new GroupNameModal(this.plugin,group).open()));menu.addItem(i=>i.setTitle('그룹 삭제').setIcon('trash').onClick(()=>new DeleteGroupModal(this.plugin,group).open()));menu.showAtMouseEvent(this.menuEvent||{clientX:more.getBoundingClientRect().left,clientY:more.getBoundingClientRect().bottom});});more.setAttribute('aria-label',group.name+' 그룹 옵션');}
     };
     choose('none','켜진 플러그인',manifests.filter(m=>store.isVisible('none',m.id)).length);
@@ -68,6 +92,7 @@ class GroupsModal extends Modal{
     for(const group of store.groups)if(group.name.toLowerCase().includes(this.groupQuery.toLowerCase()))choose(group.id,group.name,group.pluginIds.filter(id=>this.app.plugins.manifests[id]).length,group);
 
     action(side,'+ 그룹 만들기',()=>new GroupNameModal(this.plugin).open(),'pm-group-create').disabled=store.busy;
+    side.scrollTop=oldSideScroll;
     const search=main.createEl('input',{type:'search',placeholder:'플러그인 검색…',cls:'pm-group-search',attr:{'aria-label':'플러그인 검색'}});search.value=this.query;
     search.oninput=()=>{const position=search.selectionStart;this.query=search.value;this.render();const next=this.contentEl.querySelector('.pm-group-search');next.focus();try{next.setSelectionRange(position,position);}catch{}};
     const toolbar=main.createDiv({cls:'pm-group-toolbar'});

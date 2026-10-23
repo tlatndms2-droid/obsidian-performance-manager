@@ -70,3 +70,14 @@ test('a silently failed Obsidian config write is detected and rolled back',async
  p.app.vault={configDir:'.obsidian',adapter:{read:async()=>JSON.stringify(file)}};m.saveConfig=async()=>{};
  await assert.rejects(s.apply(['a'],false),/저장하지 못했습니다/);assert.ok(m.plugins.a);assert.equal(p.groupTransaction,null);
 });
+
+test('group reorder moves before and after without changing membership, memory or activation',async()=>{
+ const {s,calls}=setup();const a=await s.create('A'),b=await s.create('B'),c=await s.create('C');await s.assign(['a'],a);await s.assign(['b'],b);
+ const before=s.snapshot(),memory=s.memory();await s.moveGroup(c,a);assert.deepEqual(s.groups.map(g=>g.id),[c,a,b]);
+ await s.moveGroup(c,b,true);assert.deepEqual(s.groups.map(g=>g.id),[a,b,c]);assert.deepEqual(s.snapshot(),before);assert.deepEqual(s.memory(),memory);assert.equal(calls.length,0);
+ const reload=new GroupStore(s.plugin,s.snapshot());assert.deepEqual(reload.groups.map(g=>g.id),[a,b,c]);
+});
+test('failed group reorder save restores the previous order',async()=>{
+ const {s,p}=setup();const a=await s.create('A'),b=await s.create('B');p.persist=async()=>{throw Error('disk failure');};
+ await assert.rejects(s.moveGroup(b,a),/disk failure/);assert.deepEqual(s.groups.map(g=>g.id),[a,b]);
+});

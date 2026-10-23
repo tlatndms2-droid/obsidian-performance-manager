@@ -27,6 +27,10 @@ class GroupStore {
   async rename(id,name){name=name.trim();if(!name)throw new Error('그룹 이름을 입력하세요.');if(this.groups.some(g=>g.id!==id&&g.name===name))throw new Error('같은 이름의 그룹이 있습니다.');await this.edit(()=>{const g=this.find(id);g.name=name;});}
   find(id){const g=this.groups.find(g=>g.id===id);if(!g)throw new Error('그룹을 찾을 수 없습니다.');return g;}
   async remove(id){await this.edit(()=>{this.groups=this.groups.filter(g=>g.id!==id);});}
+  async moveGroup(id,target,after=false){
+    this.find(id);this.find(target);if(id===target)return;
+    await this.edit(()=>{const group=this.find(id);this.groups=this.groups.filter(g=>g.id!==id);const index=this.groups.findIndex(g=>g.id===target);this.groups.splice(index+(after?1:0),0,group);});
+  }
   async assign(ids,target){
     const selected=new Set(ids.filter(id=>this.plugin.app.plugins.manifests[id]));
     if(target)this.find(target);

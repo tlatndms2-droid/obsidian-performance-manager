@@ -65,6 +65,12 @@
 .pm-group-nav-item.is-selected .pm-group-select{color:var(--text-accent)}
 .pm-group-counts{display:block;margin-top:4px;font-size:var(--font-ui-smaller);font-weight:normal;color:var(--text-muted)}
 .pm-group-active-count{color:var(--text-accent)}
+.pm-group-nav-item[data-pm-group-order-id]{position:relative}
+.pm-group-nav-item[data-pm-group-order-id] .pm-group-select{cursor:grab}
+.pm-group-order-dragging{opacity:.45}
+.pm-group-insert-before:before,.pm-group-insert-after:after{content:'';position:absolute;left:4px;right:4px;height:2px;background:var(--interactive-accent);border-radius:2px;pointer-events:none;z-index:1}
+.pm-group-insert-before:before{top:-3px}
+.pm-group-insert-after:after{bottom:-3px}
 .pm-group-nav-actions{display:flex;gap:5px;padding:3px 8px}
 .pm-group-nav-actions button{font-size:var(--font-ui-smaller);height:25px;padding:3px 8px}
 .pm-group-create{margin:18px 5px 0;max-width:calc(100% - 10px)}

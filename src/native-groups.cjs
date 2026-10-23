@@ -59,16 +59,20 @@ class NativeGroups {
       const visibleRows=rows.filter(row=>row.style.display!=='none'&&!row.hidden);
       const launch=root.createDiv({cls:'pm-native-group-launch'});const manage=launch.createEl('button',{text:'플러그인 관리 열기'});manage.onclick=()=>this.plugin.openGroups();
       const grouped=new Set();
-      const addSection=(id,name,members,group)=>{
+      const addSection=(id,name,members,group,parent=root,ownMembers=members)=>{
         if(!members.length)return;
         const revealed=members.some(row=>row.dataset.pluginId===this.revealedPluginId);
-        const d=root.createEl('details',{cls:'pm-native-group',attr:{'data-pm-group-id':id}});d.open=!!query||revealed||!store.collapsed[id];
+        const d=parent.createEl('details',{cls:'pm-native-group',attr:{'data-pm-group-id':id}});d.open=!!query||revealed||!store.collapsed[id];
         const summary=d.createEl('summary');summary.createSpan({text:name+' · '+members.length+'개'});
         if(group){const actions=summary.createSpan({cls:'pm-native-group-actions'});actions.onclick=e=>e.stopPropagation();groupToggle(actions,this.plugin,group);}
-        const body=d.createDiv({cls:'pm-native-group-body'});for(const row of members){grouped.add(row.dataset.pluginId);body.appendChild(row);}
+        const body=d.createDiv({cls:'pm-native-group-body'});for(const row of ownMembers){grouped.add(row.dataset.pluginId);body.appendChild(row);}
         d.ontoggle=()=>{if(!d.isConnected||query)return;if(revealed){if(d.open)return;this.revealedPluginId=null;}const collapsed=!d.open;if(!!store.collapsed[id]!==collapsed){store.collapsed[id]=collapsed;this.plugin.persist();}};
+        return body;
       };
-      for(const group of store.groups)addSection(group.id,group.name,visibleRows.filter(r=>group.pluginIds.includes(r.dataset.pluginId)),group);
+      for(const group of store.roots()){
+        const body=addSection(group.id,group.name,visibleRows.filter(r=>store.contains(group.id,r.dataset.pluginId)),group,root,visibleRows.filter(r=>group.pluginIds.includes(r.dataset.pluginId)));
+        if(body)for(const child of store.children(group.id))addSection(child.id,child.name,visibleRows.filter(r=>child.pluginIds.includes(r.dataset.pluginId)),child,body);
+      }
       addSection('none','그룹 없음',visibleRows.filter(r=>!grouped.has(r.dataset.pluginId)));
     }finally{
       if(!this.observer)this.observer=new MutationObserver(records=>{if(records.some(r=>r.type==='childList'||r.target.matches?.('[data-plugin-id]')))this.schedule();});

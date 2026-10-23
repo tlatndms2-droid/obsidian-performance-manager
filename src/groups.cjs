@@ -1,35 +1,47 @@
 class GroupStore {
   constructor(plugin,data={}){
-    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};
+    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};this.treeCollapsed=data.treeCollapsed||{};
     const assigned=new Set(),ids=new Set();
-    this.groups=(Array.isArray(data.groups)?data.groups:[]).filter(g=>g&&typeof g.id==='string'&&typeof g.name==='string'&&!ids.has(g.id)&&ids.add(g.id)).map(g=>{const pluginIds=(Array.isArray(g.pluginIds)?g.pluginIds:[]).filter(id=>typeof id==='string'&&!assigned.has(id)&&assigned.add(id));return {id:g.id,name:g.name,pluginIds,rememberedEnabled:Object.fromEntries(pluginIds.filter(id=>typeof g.rememberedEnabled?.[id]==='boolean').map(id=>[id,g.rememberedEnabled[id]]))};});
+    this.groups=(Array.isArray(data.groups)?data.groups:[]).filter(g=>g&&typeof g.id==='string'&&typeof g.name==='string'&&!ids.has(g.id)&&ids.add(g.id)).map(g=>{const pluginIds=(Array.isArray(g.pluginIds)?g.pluginIds:[]).filter(id=>typeof id==='string'&&!assigned.has(id)&&assigned.add(id));return {id:g.id,name:g.name,parentId:typeof g.parentId==='string'?g.parentId:null,pluginIds,rememberedEnabled:Object.fromEntries(pluginIds.filter(id=>typeof g.rememberedEnabled?.[id]==='boolean').map(id=>[id,g.rememberedEnabled[id]]))};});
+    const parents=new Map(this.groups.map(g=>[g.id,g.parentId]));for(const g of this.groups)if(g.parentId===g.id||!parents.has(g.parentId)||parents.get(g.parentId))g.parentId=null;
   }
-  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed}));}
+  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed,treeCollapsed:this.treeCollapsed}));}
+  roots(){return this.groups.filter(g=>!g.parentId);}
+  children(id){return this.groups.filter(g=>g.parentId===id);}
+  orderedGroups(){return this.roots().flatMap(g=>[g,...this.children(g.id)]);}
+  subtree(id){return [this.find(id),...this.children(id)];}
+  members(id){return [...new Set(this.subtree(id).flatMap(g=>g.pluginIds))];}
+  path(id,separator=' / '){const g=this.find(id);return g.parentId?this.find(g.parentId).name+separator+g.name:g.name;}
+  contains(groupId,pluginId){return this.members(groupId).includes(pluginId);}
+  assertParent(id,parentId){if(!parentId)return;const parent=this.find(parentId);if(id===parentId||parent.parentId||this.children(id).length)throw new Error('상위 그룹과 하위 그룹의 2단계까지만 만들 수 있습니다.');}
+  async toggleTree(id){await this.edit(()=>{this.find(id);this.treeCollapsed[id]=!this.treeCollapsed[id];});}
   async save(){await this.plugin.persist();if(this.plugin.saveError)throw new Error(this.plugin.saveError);}
   changed(){this.plugin.groupChanged?.();}
   memory(){return Object.fromEntries(this.groups.map(g=>[g.id,{...g.rememberedEnabled}]));}
   restoreMemory(memory){for(const g of this.groups)if(memory?.[g.id])g.rememberedEnabled={...memory[g.id]};}
   fillMemory(){let changed=false;for(const g of this.groups)for(const id of g.pluginIds)if(!Object.hasOwn(g.rememberedEnabled,id)&&this.plugin.app.plugins.manifests[id]){g.rememberedEnabled[id]=this.plugin.app.plugins.enabledPlugins.has(id);changed=true;}return changed;}
   async initializeMemory(){if(this.busy||this.plugin.groupTransaction?.before)return;const previous=this.memory();if(!this.fillMemory())return;this.busy=true;try{await this.save();}catch(e){this.restoreMemory(previous);throw e;}finally{this.busy=false;this.changed();}}
-  isVisible(view,id){const manager=this.plugin.app.plugins;if(!manager.manifests[id])return false;const group=this.groupFor(id),active=!!manager.plugins[id];if(view==='none')return !group&&active;if(view==='disabled')return !group&&!active;return group?.id===view;}
+  isVisible(view,id){const manager=this.plugin.app.plugins;if(!manager.manifests[id])return false;const group=this.groupFor(id),active=!!manager.plugins[id];if(view==='none')return !group&&active;if(view==='disabled')return !group&&!active;return !!group&&(group.id===view||group.parentId===view);}
   async edit(fn){
     if(this.busy)throw new Error('플러그인 전환이 끝난 후 수정하세요.');
     if(this.plugin.groupTransaction?.before)throw new Error('이전 전환 복구를 먼저 완료해야 합니다.');
-    const previous=JSON.parse(JSON.stringify(this.groups));this.busy=true;
-    try{fn();await this.save();}catch(e){this.groups=previous;throw e;}finally{this.busy=false;this.changed();}
+    const previous=this.snapshot();this.busy=true;
+    try{fn();await this.save();}catch(e){this.groups=previous.groups;this.collapsed=previous.collapsed;this.treeCollapsed=previous.treeCollapsed;throw e;}finally{this.busy=false;this.changed();}
   }
-  async create(name){
+  async create(name,parentId=null){
     name=name.trim();if(!name)throw new Error('그룹 이름을 입력하세요.');
     if(this.groups.some(g=>g.name===name))throw new Error('같은 이름의 그룹이 있습니다.');
     const id=globalThis.crypto?.randomUUID?.()||'group-'+Date.now()+'-'+Math.random().toString(36).slice(2);
-    await this.edit(()=>this.groups.push({id,name,pluginIds:[],rememberedEnabled:{}}));return id;
+    this.assertParent(id,parentId);
+    await this.edit(()=>{this.groups.push({id,name,parentId,pluginIds:[],rememberedEnabled:{}});if(parentId)this.treeCollapsed[parentId]=false;});return id;
   }
   async rename(id,name){name=name.trim();if(!name)throw new Error('그룹 이름을 입력하세요.');if(this.groups.some(g=>g.id!==id&&g.name===name))throw new Error('같은 이름의 그룹이 있습니다.');await this.edit(()=>{const g=this.find(id);g.name=name;});}
   find(id){const g=this.groups.find(g=>g.id===id);if(!g)throw new Error('그룹을 찾을 수 없습니다.');return g;}
-  async remove(id){await this.edit(()=>{this.groups=this.groups.filter(g=>g.id!==id);});}
+  async remove(id){await this.edit(()=>{this.groups=this.groups.filter(g=>g.id!==id);for(const g of this.children(id))g.parentId=null;delete this.collapsed[id];delete this.treeCollapsed[id];});}
+  async reparentGroup(id,parentId){this.find(id);this.assertParent(id,parentId);await this.edit(()=>{this.find(id).parentId=parentId||null;if(parentId)this.treeCollapsed[parentId]=false;});}
   async moveGroup(id,target,after=false){
-    this.find(id);this.find(target);if(id===target)return;
-    await this.edit(()=>{const group=this.find(id);this.groups=this.groups.filter(g=>g.id!==id);const index=this.groups.findIndex(g=>g.id===target);this.groups.splice(index+(after?1:0),0,group);});
+    this.find(id);const destination=this.find(target);if(id===target)return;this.assertParent(id,destination.parentId);
+    await this.edit(()=>{const group=this.find(id);group.parentId=destination.parentId;this.groups=this.groups.filter(g=>g.id!==id);const index=this.groups.findIndex(g=>g.id===target);this.groups.splice(index+(after?1:0),0,group);});
   }
   async assign(ids,target){
     const selected=new Set(ids.filter(id=>this.plugin.app.plugins.manifests[id]));
@@ -41,9 +53,9 @@ class GroupStore {
   async forgetMemory(id){if(this.busy||!this.groupFor(id))return;await this.edit(()=>{delete this.groupFor(id).rememberedEnabled[id];});}
   async apply(ids,enabled){return this.applyStates(Object.fromEntries(ids.map(id=>[id,enabled])));}
   async applyGroup(id,enabled){
-    const group=this.find(id),manager=this.plugin.app.plugins;
-    const ids=group.pluginIds.filter(id=>manager.manifests[id]&&id!==this.plugin.manifest.id);
-    const states=Object.fromEntries(ids.map(id=>[id,enabled?(Object.hasOwn(group.rememberedEnabled,id)?group.rememberedEnabled[id]:manager.enabledPlugins.has(id)):false]));
+    const manager=this.plugin.app.plugins;
+    const ids=this.members(id).filter(id=>manager.manifests[id]&&id!==this.plugin.manifest.id);
+    const states=Object.fromEntries(ids.map(id=>{const memory=this.groupFor(id).rememberedEnabled;return [id,enabled?(Object.hasOwn(memory,id)?memory[id]:manager.enabledPlugins.has(id)):false];}));
     if(enabled&&!Object.values(states).some(Boolean))throw new Error('기억한 조합에 켜질 플러그인이 없습니다. 원하는 항목을 개별적으로 켜세요.');
     return this.applyStates(states,{source:'group'});
   }

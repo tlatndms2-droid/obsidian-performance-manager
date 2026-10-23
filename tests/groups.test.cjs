@@ -81,3 +81,40 @@ test('failed group reorder save restores the previous order',async()=>{
  const {s,p}=setup();const a=await s.create('A'),b=await s.create('B');p.persist=async()=>{throw Error('disk failure');};
  await assert.rejects(s.moveGroup(b,a),/disk failure/);assert.deepEqual(s.groups.map(g=>g.id),[a,b]);
 });
+
+test('subgroup creation preserves direct membership and aggregates only descendants',async()=>{
+ const {s,m,calls}=setup();const root=await s.create('Canvas');await s.assign(['a'],root);const child=await s.create('Edit',root);await s.assign(['b'],child);
+ assert.equal(s.groupFor('a').id,root);assert.equal(s.groupFor('b').id,child);assert.deepEqual(s.members(root),['a','b']);assert.deepEqual(s.members(child),['b']);
+ assert.ok(s.isVisible(root,'b'));assert.ok(!s.isVisible(child,'a'));assert.ok(!s.isVisible('none','b'));assert.equal(s.path(child),'Canvas / Edit');assert.equal(calls.length,0);assert.ok(m.plugins.a);
+ const reload=new GroupStore(s.plugin,s.snapshot());assert.equal(reload.find(child).parentId,root);assert.deepEqual(reload.members(root),['a','b']);
+});
+test('parent restores each owner group memory and child switching does not affect its parent direct items',async()=>{
+ const {s,m}=setup();await s.apply(['b'],false);const root=await s.create('Canvas'),child=await s.create('Edit',root);
+ await s.assign(['c'],root);await s.assign(['a','b'],child);const memory=s.memory();
+ await s.applyGroup(root,false);assert.ok(!m.plugins.a&&!m.plugins.b&&!m.plugins.c);assert.deepEqual(s.memory(),memory);
+ await s.applyGroup(root,true);assert.ok(m.plugins.a&&m.plugins.c);assert.equal(m.plugins.b,undefined);
+ await s.applyGroup(child,false);assert.ok(m.plugins.c);assert.equal(m.plugins.a,undefined);await s.applyGroup(child,true);assert.ok(m.plugins.a);
+ await s.apply(['b'],true);await s.applyGroup(root,false);await s.applyGroup(root,true);assert.ok(m.plugins.b);
+});
+test('hierarchy rejects cycles and a third level without losing data',async()=>{
+ const {s}=setup();const root=await s.create('Root'),child=await s.create('Child',root),other=await s.create('Other');const before=s.snapshot();
+ await assert.rejects(s.create('Grandchild',child),/2단계/);await assert.rejects(s.reparentGroup(root,child),/2단계/);await assert.rejects(s.reparentGroup(root,other),/2단계/);await assert.rejects(s.reparentGroup(child,child),/2단계/);assert.deepEqual(s.snapshot(),before);
+});
+test('drag nesting and sibling placement preserve group contents and memory',async()=>{
+ const {s,calls}=setup();const root=await s.create('Root'),one=await s.create('One'),two=await s.create('Two',root);
+ await s.assign(['a'],one);const memory=s.memory();await s.reparentGroup(one,root);assert.equal(s.find(one).parentId,root);
+ await s.moveGroup(one,two);assert.deepEqual(s.children(root).map(g=>g.id),[one,two]);
+ await s.moveGroup(one,root,true);assert.equal(s.find(one).parentId,null);assert.deepEqual(s.find(one).pluginIds,['a']);assert.deepEqual(s.memory(),memory);assert.equal(calls.length,0);
+});
+test('deleting a parent promotes children and leaves their plugins untouched',async()=>{
+ const {s,m}=setup();const root=await s.create('Root'),child=await s.create('Child',root);await s.assign(['a'],root);await s.assign(['b'],child);const remembered={...s.find(child).rememberedEnabled};await s.remove(root);
+ assert.equal(s.find(child).parentId,null);assert.deepEqual(s.find(child).rememberedEnabled,remembered);assert.equal(s.groupFor('b').id,child);assert.equal(s.groupFor('a'),undefined);assert.ok(m.plugins.a&&m.plugins.b);
+});
+test('tree collapse and parent changes roll back together on failed persistence',async()=>{
+ const {s,p}=setup();const root=await s.create('Root'),child=await s.create('Child');const before=s.snapshot();p.persist=async()=>{throw Error('disk failure');};
+ await assert.rejects(s.reparentGroup(child,root),/disk/);assert.deepEqual(s.snapshot(),before);await assert.rejects(s.toggleTree(root),/disk/);assert.deepEqual(s.snapshot(),before);
+});
+test('flat migration and malformed parent references never alter plugin ownership or activation',async()=>{
+ const {p,calls}=setup();const s=new GroupStore(p,{groups:[{id:'x',name:'X',parentId:'y',pluginIds:['a']},{id:'y',name:'Y',parentId:'x',pluginIds:['b']},{id:'z',name:'Z',parentId:'missing',pluginIds:['c']}]});
+ assert.equal(s.roots().length,3);assert.equal(s.groupFor('a').id,'x');assert.equal(s.groupFor('b').id,'y');await s.initializeMemory();assert.equal(calls.length,0);
+});

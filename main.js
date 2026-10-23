@@ -1,4 +1,4 @@
-/* Performance Manager 0.2.6 */
+/* Performance Manager 0.2.7 */
 (function(nativeRequire){
 const factories={"./profile.cjs": function(module,exports,require){
 const SYSTEM = new Set(['(idle)', '(program)', '(root)', '(garbage collector)']);
@@ -274,36 +274,48 @@ module.exports={OverlayManager,fitBox,dragBox,resizeBox};
 "./groups.cjs": function(module,exports,require){
 class GroupStore {
   constructor(plugin,data={}){
-    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};
+    this.plugin=plugin;this.busy=false;this.error='';this.collapsed=data.collapsed||{};this.treeCollapsed=data.treeCollapsed||{};
     const assigned=new Set(),ids=new Set();
-    this.groups=(Array.isArray(data.groups)?data.groups:[]).filter(g=>g&&typeof g.id==='string'&&typeof g.name==='string'&&!ids.has(g.id)&&ids.add(g.id)).map(g=>{const pluginIds=(Array.isArray(g.pluginIds)?g.pluginIds:[]).filter(id=>typeof id==='string'&&!assigned.has(id)&&assigned.add(id));return {id:g.id,name:g.name,pluginIds,rememberedEnabled:Object.fromEntries(pluginIds.filter(id=>typeof g.rememberedEnabled?.[id]==='boolean').map(id=>[id,g.rememberedEnabled[id]]))};});
+    this.groups=(Array.isArray(data.groups)?data.groups:[]).filter(g=>g&&typeof g.id==='string'&&typeof g.name==='string'&&!ids.has(g.id)&&ids.add(g.id)).map(g=>{const pluginIds=(Array.isArray(g.pluginIds)?g.pluginIds:[]).filter(id=>typeof id==='string'&&!assigned.has(id)&&assigned.add(id));return {id:g.id,name:g.name,parentId:typeof g.parentId==='string'?g.parentId:null,pluginIds,rememberedEnabled:Object.fromEntries(pluginIds.filter(id=>typeof g.rememberedEnabled?.[id]==='boolean').map(id=>[id,g.rememberedEnabled[id]]))};});
+    const parents=new Map(this.groups.map(g=>[g.id,g.parentId]));for(const g of this.groups)if(g.parentId===g.id||!parents.has(g.parentId)||parents.get(g.parentId))g.parentId=null;
   }
-  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed}));}
+  snapshot(){return JSON.parse(JSON.stringify({groups:this.groups,collapsed:this.collapsed,treeCollapsed:this.treeCollapsed}));}
+  roots(){return this.groups.filter(g=>!g.parentId);}
+  children(id){return this.groups.filter(g=>g.parentId===id);}
+  orderedGroups(){return this.roots().flatMap(g=>[g,...this.children(g.id)]);}
+  subtree(id){return [this.find(id),...this.children(id)];}
+  members(id){return [...new Set(this.subtree(id).flatMap(g=>g.pluginIds))];}
+  path(id,separator=' / '){const g=this.find(id);return g.parentId?this.find(g.parentId).name+separator+g.name:g.name;}
+  contains(groupId,pluginId){return this.members(groupId).includes(pluginId);}
+  assertParent(id,parentId){if(!parentId)return;const parent=this.find(parentId);if(id===parentId||parent.parentId||this.children(id).length)throw new Error('상위 그룹과 하위 그룹의 2단계까지만 만들 수 있습니다.');}
+  async toggleTree(id){await this.edit(()=>{this.find(id);this.treeCollapsed[id]=!this.treeCollapsed[id];});}
   async save(){await this.plugin.persist();if(this.plugin.saveError)throw new Error(this.plugin.saveError);}
   changed(){this.plugin.groupChanged?.();}
   memory(){return Object.fromEntries(this.groups.map(g=>[g.id,{...g.rememberedEnabled}]));}
   restoreMemory(memory){for(const g of this.groups)if(memory?.[g.id])g.rememberedEnabled={...memory[g.id]};}
   fillMemory(){let changed=false;for(const g of this.groups)for(const id of g.pluginIds)if(!Object.hasOwn(g.rememberedEnabled,id)&&this.plugin.app.plugins.manifests[id]){g.rememberedEnabled[id]=this.plugin.app.plugins.enabledPlugins.has(id);changed=true;}return changed;}
   async initializeMemory(){if(this.busy||this.plugin.groupTransaction?.before)return;const previous=this.memory();if(!this.fillMemory())return;this.busy=true;try{await this.save();}catch(e){this.restoreMemory(previous);throw e;}finally{this.busy=false;this.changed();}}
-  isVisible(view,id){const manager=this.plugin.app.plugins;if(!manager.manifests[id])return false;const group=this.groupFor(id),active=!!manager.plugins[id];if(view==='none')return !group&&active;if(view==='disabled')return !group&&!active;return group?.id===view;}
+  isVisible(view,id){const manager=this.plugin.app.plugins;if(!manager.manifests[id])return false;const group=this.groupFor(id),active=!!manager.plugins[id];if(view==='none')return !group&&active;if(view==='disabled')return !group&&!active;return !!group&&(group.id===view||group.parentId===view);}
   async edit(fn){
     if(this.busy)throw new Error('플러그인 전환이 끝난 후 수정하세요.');
     if(this.plugin.groupTransaction?.before)throw new Error('이전 전환 복구를 먼저 완료해야 합니다.');
-    const previous=JSON.parse(JSON.stringify(this.groups));this.busy=true;
-    try{fn();await this.save();}catch(e){this.groups=previous;throw e;}finally{this.busy=false;this.changed();}
+    const previous=this.snapshot();this.busy=true;
+    try{fn();await this.save();}catch(e){this.groups=previous.groups;this.collapsed=previous.collapsed;this.treeCollapsed=previous.treeCollapsed;throw e;}finally{this.busy=false;this.changed();}
   }
-  async create(name){
+  async create(name,parentId=null){
     name=name.trim();if(!name)throw new Error('그룹 이름을 입력하세요.');
     if(this.groups.some(g=>g.name===name))throw new Error('같은 이름의 그룹이 있습니다.');
     const id=globalThis.crypto?.randomUUID?.()||'group-'+Date.now()+'-'+Math.random().toString(36).slice(2);
-    await this.edit(()=>this.groups.push({id,name,pluginIds:[],rememberedEnabled:{}}));return id;
+    this.assertParent(id,parentId);
+    await this.edit(()=>{this.groups.push({id,name,parentId,pluginIds:[],rememberedEnabled:{}});if(parentId)this.treeCollapsed[parentId]=false;});return id;
   }
   async rename(id,name){name=name.trim();if(!name)throw new Error('그룹 이름을 입력하세요.');if(this.groups.some(g=>g.id!==id&&g.name===name))throw new Error('같은 이름의 그룹이 있습니다.');await this.edit(()=>{const g=this.find(id);g.name=name;});}
   find(id){const g=this.groups.find(g=>g.id===id);if(!g)throw new Error('그룹을 찾을 수 없습니다.');return g;}
-  async remove(id){await this.edit(()=>{this.groups=this.groups.filter(g=>g.id!==id);});}
+  async remove(id){await this.edit(()=>{this.groups=this.groups.filter(g=>g.id!==id);for(const g of this.children(id))g.parentId=null;delete this.collapsed[id];delete this.treeCollapsed[id];});}
+  async reparentGroup(id,parentId){this.find(id);this.assertParent(id,parentId);await this.edit(()=>{this.find(id).parentId=parentId||null;if(parentId)this.treeCollapsed[parentId]=false;});}
   async moveGroup(id,target,after=false){
-    this.find(id);this.find(target);if(id===target)return;
-    await this.edit(()=>{const group=this.find(id);this.groups=this.groups.filter(g=>g.id!==id);const index=this.groups.findIndex(g=>g.id===target);this.groups.splice(index+(after?1:0),0,group);});
+    this.find(id);const destination=this.find(target);if(id===target)return;this.assertParent(id,destination.parentId);
+    await this.edit(()=>{const group=this.find(id);group.parentId=destination.parentId;this.groups=this.groups.filter(g=>g.id!==id);const index=this.groups.findIndex(g=>g.id===target);this.groups.splice(index+(after?1:0),0,group);});
   }
   async assign(ids,target){
     const selected=new Set(ids.filter(id=>this.plugin.app.plugins.manifests[id]));
@@ -315,9 +327,9 @@ class GroupStore {
   async forgetMemory(id){if(this.busy||!this.groupFor(id))return;await this.edit(()=>{delete this.groupFor(id).rememberedEnabled[id];});}
   async apply(ids,enabled){return this.applyStates(Object.fromEntries(ids.map(id=>[id,enabled])));}
   async applyGroup(id,enabled){
-    const group=this.find(id),manager=this.plugin.app.plugins;
-    const ids=group.pluginIds.filter(id=>manager.manifests[id]&&id!==this.plugin.manifest.id);
-    const states=Object.fromEntries(ids.map(id=>[id,enabled?(Object.hasOwn(group.rememberedEnabled,id)?group.rememberedEnabled[id]:manager.enabledPlugins.has(id)):false]));
+    const manager=this.plugin.app.plugins;
+    const ids=this.members(id).filter(id=>manager.manifests[id]&&id!==this.plugin.manifest.id);
+    const states=Object.fromEntries(ids.map(id=>{const memory=this.groupFor(id).rememberedEnabled;return [id,enabled?(Object.hasOwn(memory,id)?memory[id]:manager.enabledPlugins.has(id)):false];}));
     if(enabled&&!Object.values(states).some(Boolean))throw new Error('기억한 조합에 켜질 플러그인이 없습니다. 원하는 항목을 개별적으로 켜세요.');
     return this.applyStates(states,{source:'group'});
   }
@@ -426,42 +438,47 @@ const run=async fn=>{try{await fn();}catch(e){new Notice(String(e.message||e));}
 function action(parent,text,fn,cls=''){const b=parent.createEl('button',{text,cls});b.onclick=()=>run(fn);return b;}
 
 class GroupNameModal extends Modal{
-  constructor(plugin,group=null){super(plugin.app);this.plugin=plugin;this.group=group;}
-  onOpen(){this.titleEl.setText(this.group?'그룹 이름 변경':'그룹 만들기');const setting=new Setting(this.contentEl).setName('그룹 이름');let name=this.group?.name||'';setting.addText(t=>{t.setValue(name).onChange(v=>name=v);this.input=t.inputEl;});const footer=this.contentEl.createDiv({cls:'pm-group-actions'});action(footer,'취소',()=>this.close());action(footer,'저장',async()=>{const store=this.plugin.groupStore;if(this.group)await store.rename(this.group.id,name);else{const id=await store.create(name);for(const modal of this.plugin.groupModals)modal.selectedGroup=id;}this.close();this.plugin.groupChanged();},'mod-cta');this.input.focus();this.input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();footer.lastElementChild.click();}});}
+  constructor(plugin,group=null,parentId=null){super(plugin.app);this.plugin=plugin;this.group=group;this.parentId=parentId;}
+  onOpen(){this.titleEl.setText(this.group?'그룹 이름 변경':this.parentId?'하위 그룹 만들기':'그룹 만들기');const setting=new Setting(this.contentEl).setName('그룹 이름');let name=this.group?.name||'';setting.addText(t=>{t.setValue(name).onChange(v=>name=v);this.input=t.inputEl;});const footer=this.contentEl.createDiv({cls:'pm-group-actions'});action(footer,'취소',()=>this.close());action(footer,'저장',async()=>{const store=this.plugin.groupStore;if(this.group)await store.rename(this.group.id,name);else{const id=await store.create(name,this.parentId);for(const modal of this.plugin.groupModals)modal.selectedGroup=id;}this.close();this.plugin.groupChanged();},'mod-cta');this.input.focus();this.input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();footer.lastElementChild.click();}});}
 }
 class DeleteGroupModal extends Modal{
   constructor(plugin,group){super(plugin.app);this.plugin=plugin;this.group=group;}
-  onOpen(){this.titleEl.setText('그룹 삭제');this.contentEl.createEl('p',{text:'“'+this.group.name+'” 그룹을 삭제합니다. 플러그인은 삭제하거나 끄지 않습니다. 소속을 해제하고 현재 상태에 따라 ‘켜진 플러그인’ 또는 ‘꺼진 플러그인’에 표시합니다.'});const footer=this.contentEl.createDiv({cls:'pm-group-actions'});action(footer,'취소',()=>this.close());action(footer,'그룹 삭제',async()=>{await this.plugin.groupStore.remove(this.group.id);for(const modal of this.plugin.groupModals)if(modal.selectedGroup===this.group.id)modal.selectedGroup='none';this.plugin.groupChanged();this.close();},'mod-warning');}
+  onOpen(){this.titleEl.setText('그룹 삭제');this.contentEl.createEl('p',{text:'“'+this.group.name+'” 그룹을 삭제합니다. 플러그인은 삭제하거나 끄지 않습니다. 이 그룹에 직접 속한 항목은 소속을 해제합니다. 하위 그룹이 있으면 삭제하지 않고 독립 그룹으로 유지합니다.'});const footer=this.contentEl.createDiv({cls:'pm-group-actions'});action(footer,'취소',()=>this.close());action(footer,'그룹 삭제',async()=>{await this.plugin.groupStore.remove(this.group.id);for(const modal of this.plugin.groupModals)if(modal.selectedGroup===this.group.id)modal.selectedGroup='none';this.plugin.groupChanged();this.close();},'mod-warning');}
 }
 class GroupPickerModal extends Modal{
   constructor(owner){super(owner.app);this.owner=owner;this.ids=[...owner.checked];}
-  onOpen(){this.titleEl.setText('그룹에 추가');this.modalEl.addClass('pm-group-picker');const search=this.contentEl.createEl('input',{type:'search',placeholder:'그룹 검색…',attr:{'aria-label':'추가할 그룹 검색'}}),list=this.contentEl.createDiv({cls:'pm-group-picker-list'});search.style.width='100%';const render=()=>{list.empty();const groups=this.owner.plugin.groupStore.groups.filter(g=>g.name.toLowerCase().includes(search.value.toLowerCase()));for(const g of groups)action(list,g.name,async()=>{await this.owner.plugin.groupStore.assign(this.ids,g.id);this.owner.checked.clear();this.owner.anchor=null;this.owner.render();this.close();},'pm-picker-option');if(!groups.length)list.createDiv({text:'일치하는 그룹이 없습니다.',cls:'pm-group-empty'});};search.oninput=render;search.onkeydown=e=>{if(e.key==='Enter')list.querySelector('button')?.click();};render();search.focus();}
+  onOpen(){this.titleEl.setText('그룹에 추가');this.modalEl.addClass('pm-group-picker');const search=this.contentEl.createEl('input',{type:'search',placeholder:'그룹 검색…',attr:{'aria-label':'추가할 그룹 검색'}}),list=this.contentEl.createDiv({cls:'pm-group-picker-list'});search.style.width='100%';const render=()=>{list.empty();const groups=this.owner.plugin.groupStore.orderedGroups().filter(g=>this.owner.plugin.groupStore.path(g.id).toLowerCase().includes(search.value.toLowerCase()));for(const g of groups)action(list,this.owner.plugin.groupStore.path(g.id),async()=>{await this.owner.plugin.groupStore.assign(this.ids,g.id);this.owner.checked.clear();this.owner.anchor=null;this.owner.render();this.close();},'pm-picker-option');if(!groups.length)list.createDiv({text:'일치하는 그룹이 없습니다.',cls:'pm-group-empty'});};search.oninput=render;search.onkeydown=e=>{if(e.key==='Enter')list.querySelector('button')?.click();};render();search.focus();}
 }
 class GroupsModal extends Modal{
   constructor(plugin){super(plugin.app);this.plugin=plugin;this.selectedGroup='none';this.checked=new Set();this.query='';this.groupQuery='';this.editing=false;this.anchor=null;this.sideWidth=plugin.groupWindow?.side||220;}
   onOpen(){this.modalEl.addClass('pm-groups-modal');this.titleEl.setText('플러그인 관리');this.plugin.groupModals.add(this);this.render();this.disposeWindow=installWindow(this);}
   onClose(){this.clearDrag();this.disposeWindow?.();this.plugin.groupModals.delete(this);}
-  clearDrag(){this.dragSession=null;this.groupDragSession=null;this.dragBadge?.remove();this.dragBadge=null;this.modalEl.querySelectorAll('.pm-drop-target,.pm-plugin-dragging,.pm-group-order-dragging,.pm-group-insert-before,.pm-group-insert-after').forEach(el=>el.classList.remove('pm-drop-target','pm-plugin-dragging','pm-group-order-dragging','pm-group-insert-before','pm-group-insert-after'));}
+  clearDrag(){this.dragSession=null;this.groupDragSession=null;this.dragBadge?.remove();this.dragBadge=null;this.modalEl.querySelectorAll('.pm-drop-target,.pm-plugin-dragging,.pm-group-order-dragging,.pm-group-insert-before,.pm-group-insert-after,.pm-group-nest-target').forEach(el=>el.classList.remove('pm-drop-target','pm-plugin-dragging','pm-group-order-dragging','pm-group-insert-before','pm-group-insert-after','pm-group-nest-target'));}
   prepareGroupDrag(block,group){
     block.draggable=true;block.dataset.pmGroupOrderId=group.id;
-    let blocked=false;block.onpointerdown=e=>{blocked=!!e.target.closest('.pm-group-nav-actions,input,a');};
+    let blocked=false;block.onpointerdown=e=>{blocked=!!e.target.closest('.pm-group-nav-actions,.pm-group-fold,input,a');};
     block.ondragstart=e=>{
       if(blocked||this.plugin.groupStore.busy){e.preventDefault();return;}
       this.clearDrag();this.groupDragSession={id:group.id,token:globalThis.crypto.randomUUID()};
       e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('application/x-pm-group-order',this.groupDragSession.token);block.addClass('pm-group-order-dragging');
     };
     const accepts=e=>!this.plugin.groupStore.busy&&this.groupDragSession&&Array.from(e.dataTransfer?.types||[]).includes('application/x-pm-group-order');
-    const clearMarks=()=>this.modalEl.querySelectorAll('.pm-group-insert-before,.pm-group-insert-after').forEach(el=>el.classList.remove('pm-group-insert-before','pm-group-insert-after'));
-    const after=e=>e.clientY>block.getBoundingClientRect().top+block.getBoundingClientRect().height/2;
+    const clearMarks=()=>this.modalEl.querySelectorAll('.pm-group-insert-before,.pm-group-insert-after,.pm-group-nest-target').forEach(el=>el.classList.remove('pm-group-insert-before','pm-group-insert-after','pm-group-nest-target'));
+    const placement=e=>{
+      const store=this.plugin.groupStore,source=store.find(this.groupDragSession.id),rect=block.getBoundingClientRect(),ratio=(e.clientY-rect.top)/rect.height;
+      if(group.parentId===source.id||(group.parentId&&store.children(source.id).length))return null;
+      if(!group.parentId&&!store.children(source.id).length&&ratio>.25&&ratio<.75)return 'inside';
+      return ratio>.5?'after':'before';
+    };
     block.addEventListener('dragover',e=>{
       if(!accepts(e))return;clearMarks();if(this.groupDragSession.id===group.id)return;
-      e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='move';block.addClass(after(e)?'pm-group-insert-after':'pm-group-insert-before');
+      const mode=placement(e);if(!mode)return;e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='move';block.addClass(mode==='inside'?'pm-group-nest-target':mode==='after'?'pm-group-insert-after':'pm-group-insert-before');
       const side=block.closest('.pm-group-sidebar'),rect=side.getBoundingClientRect();if(e.clientY<rect.top+32)side.scrollTop-=12;else if(e.clientY>rect.bottom-32)side.scrollTop+=12;
     });
-    block.addEventListener('dragleave',e=>{if(!block.contains(e.relatedTarget))block.classList.remove('pm-group-insert-before','pm-group-insert-after');});
+    block.addEventListener('dragleave',e=>{if(!block.contains(e.relatedTarget))block.classList.remove('pm-group-insert-before','pm-group-insert-after','pm-group-nest-target');});
     block.addEventListener('drop',e=>{
       if(!accepts(e)||e.dataTransfer.getData('application/x-pm-group-order')!==this.groupDragSession.token)return;
-      e.preventDefault();e.stopPropagation();const id=this.groupDragSession.id,below=after(e);this.clearDrag();run(()=>this.plugin.groupStore.moveGroup(id,group.id,below));
+      e.preventDefault();e.stopPropagation();const id=this.groupDragSession.id,mode=id===group.id?null:placement(e);this.clearDrag();if(mode)run(()=>mode==='inside'?this.plugin.groupStore.reparentGroup(id,group.id):this.plugin.groupStore.moveGroup(id,group.id,mode==='after'));
     });
     block.ondragend=()=>this.clearDrag();
   }
@@ -501,17 +518,29 @@ class GroupsModal extends Modal{
     if(this.anchor&&!matchesState(this.anchor))this.anchor=null;
     side.createEl('h3',{text:'그룹'});
     const groupSearch=side.createEl('input',{type:'search',placeholder:'그룹 검색…',cls:'pm-group-filter',attr:{'aria-label':'그룹 검색'}});groupSearch.value=this.groupQuery;groupSearch.oninput=()=>{this.groupQuery=groupSearch.value;this.render();this.contentEl.querySelector('.pm-group-filter').focus();};
-    const choose=(id,name,count,group)=>{
-      const block=side.createDiv({cls:'pm-group-nav-item'+(this.selectedGroup===id?' is-selected':'')});
+    const choose=(id,name,count,group,parent=side)=>{
+      const block=parent.createDiv({cls:'pm-group-nav-item'+(this.selectedGroup===id?' is-selected':'')});
       if(this.editing&&id!=='disabled')this.prepareDrop(block,id==='none'?null:id);
-      const b=action(block,group?name:name+' ('+count+')',()=>{this.selectedGroup=id;this.anchor=null;this.render();},'pm-group-select');b.setAttribute('aria-pressed',String(this.selectedGroup===id));
-      if(group){const active=group.pluginIds.filter(id=>this.app.plugins.manifests[id]&&this.app.plugins.plugins[id]).length;const counts=b.createSpan({cls:'pm-group-counts',text:'전체 '+count+'개 / '});counts.createSpan({cls:active?'pm-group-active-count':'',text:'켜짐 '+active+'개'});}
-      if(group){this.prepareGroupDrag(block,group);b.title='드래그하여 그룹 순서 바꾸기';}
-      if(group){const controls=block.createDiv({cls:'pm-group-nav-actions'});groupToggle(controls,this.plugin,group);if(id==='none')return;const more=action(controls,'⋮',()=>{const menu=new Menu();menu.addItem(i=>i.setTitle('이름 변경').setIcon('pencil').onClick(()=>new GroupNameModal(this.plugin,group).open()));menu.addItem(i=>i.setTitle('그룹 삭제').setIcon('trash').onClick(()=>new DeleteGroupModal(this.plugin,group).open()));menu.showAtMouseEvent(this.menuEvent||{clientX:more.getBoundingClientRect().left,clientY:more.getBoundingClientRect().bottom});});more.setAttribute('aria-label',group.name+' 그룹 옵션');}
+      const heading=group?block.createDiv({cls:'pm-group-heading'}):block;
+      if(group&&store.children(id).length){const fold=action(heading,store.treeCollapsed[id]&&!this.groupQuery?'▸':'▾',()=>store.toggleTree(id),'pm-group-fold');fold.setAttribute('aria-label',name+' 하위 그룹 접기·펼치기');fold.setAttribute('aria-expanded',String(!store.treeCollapsed[id]||!!this.groupQuery));fold.disabled=store.busy;}
+      const b=action(heading,group?name:name+' ('+count+')',()=>{this.selectedGroup=id;this.anchor=null;this.render();},'pm-group-select');b.setAttribute('aria-pressed',String(this.selectedGroup===id));
+      if(group){const active=store.members(group.id).filter(id=>this.app.plugins.manifests[id]&&this.app.plugins.plugins[id]).length;const counts=b.createSpan({cls:'pm-group-counts',text:'전체 '+count+'개 / '});counts.createSpan({cls:active?'pm-group-active-count':'',text:'켜짐 '+active+'개'});}
+      if(group){this.prepareGroupDrag(block,group);b.title='위·아래에 놓으면 순서 변경 · 그룹 가운데 놓으면 하위 그룹으로 이동';}
+      if(group){const controls=block.createDiv({cls:'pm-group-nav-actions'});groupToggle(controls,this.plugin,group);if(id==='none')return;const more=action(controls,'⋮',()=>{const menu=new Menu();if(!group.parentId)menu.addItem(i=>i.setTitle('하위 그룹 만들기').setIcon('folder-plus').onClick(()=>new GroupNameModal(this.plugin,null,group.id).open()));menu.addItem(i=>i.setTitle('이름 변경').setIcon('pencil').onClick(()=>new GroupNameModal(this.plugin,group).open()));menu.addItem(i=>i.setTitle('그룹 삭제').setIcon('trash').onClick(()=>new DeleteGroupModal(this.plugin,group).open()));menu.showAtMouseEvent(this.menuEvent||{clientX:more.getBoundingClientRect().left,clientY:more.getBoundingClientRect().bottom});});more.setAttribute('aria-label',group.name+' 그룹 옵션');}
     };
     choose('none','켜진 플러그인',manifests.filter(m=>store.isVisible('none',m.id)).length);
     choose('disabled','꺼진 플러그인',manifests.filter(m=>store.isVisible('disabled',m.id)).length);
-    for(const group of store.groups)if(group.name.toLowerCase().includes(this.groupQuery.toLowerCase()))choose(group.id,group.name,group.pluginIds.filter(id=>this.app.plugins.manifests[id]).length,group);
+    const groupQuery=this.groupQuery.toLowerCase();
+    for(const group of store.roots()){
+      const children=store.children(group.id),parentMatch=group.name.toLowerCase().includes(groupQuery),shownChildren=children.filter(g=>parentMatch||g.name.toLowerCase().includes(groupQuery));
+      if(!parentMatch&&!shownChildren.length)continue;
+      const node=side.createDiv({cls:'pm-group-tree-node'});
+      choose(group.id,group.name,store.members(group.id).filter(id=>this.app.plugins.manifests[id]).length,group,node);
+      if(children.length&&(!store.treeCollapsed[group.id]||groupQuery)){
+        const branch=node.createDiv({cls:'pm-group-tree-children'});
+        for(const child of shownChildren)choose(child.id,child.name,store.members(child.id).filter(id=>this.app.plugins.manifests[id]).length,child,branch);
+      }
+    }
 
     action(side,'+ 그룹 만들기',()=>new GroupNameModal(this.plugin).open(),'pm-group-create').disabled=store.busy;
     side.scrollTop=oldSideScroll;
@@ -521,8 +550,9 @@ class GroupsModal extends Modal{
     action(toolbar,this.editing?'완료':'수정',()=>{this.editing=!this.editing;this.checked.clear();this.anchor=null;this.render();},'pm-group-edit').disabled=store.busy;
     if(this.editing){toolbar.createSpan({text:this.checked.size+'개 선택됨',cls:'pm-selection-count'});
       action(toolbar,'그룹에 추가',()=>new GroupPickerModal(this).open(),'mod-cta').disabled=!this.checked.size||store.busy||!store.groups.length;
-      if(!['none','disabled'].includes(this.selectedGroup))action(toolbar,'그룹에서 빼기',async()=>{await store.assign([...this.checked].filter(id=>store.groupFor(id)?.id===this.selectedGroup),null);this.checked.clear();this.anchor=null;this.render();}).disabled=!this.checked.size||store.busy;
+      if(!['none','disabled'].includes(this.selectedGroup))action(toolbar,'그룹에서 빼기',async()=>{await store.assign([...this.checked].filter(id=>store.contains(this.selectedGroup,id)),null);this.checked.clear();this.anchor=null;this.render();}).disabled=!this.checked.size||store.busy;
     }
+    if(!['none','disabled'].includes(this.selectedGroup))main.createDiv({cls:'pm-group-breadcrumb',text:store.path(this.selectedGroup,' › ')});
     if(store.error||this.plugin.saveError)main.createDiv({cls:'pm-group-error',text:store.error||this.plugin.saveError,attr:{role:'alert'}});
     if(store.busy)main.createDiv({text:'플러그인 상태를 변경하고 있습니다…',attr:{role:'status'}});
     const list=main.createDiv({cls:'pm-group-list'});
@@ -533,7 +563,7 @@ class GroupsModal extends Modal{
       if(this.editing){const check=row.createEl('input',{type:'checkbox',attr:{'aria-label':m.name+' 선택'}});check.checked=this.checked.has(m.id);check.disabled=store.busy;check.onclick=e=>{const selection=selectRange(this.checked,shown.map(x=>x.id),this.anchor,m.id,e.shiftKey,check.checked);this.checked=selection.checked;this.anchor=selection.anchor;this.render();this.contentEl.querySelector('[data-pm-plugin-id="'+m.id+'"]>input')?.focus({preventScroll:true});};}
       const s=new Setting(row).setName(m.name).setDesc(m.description||'');
       s.nameEl.createSpan({cls:'pm-group-metadata',text:' v'+m.version+(m.author?' · 개발자: '+m.author:'')});
-      const group=store.groupFor(m.id);s.descEl.createDiv({cls:'pm-group-membership',text:'그룹: '+(group?.name||'없음')});
+      const group=store.groupFor(m.id);s.descEl.createDiv({cls:'pm-group-membership',text:'그룹: '+(group?store.path(group.id):'없음')});
       s.addExtraButton(b=>b.setIcon('more-vertical').setTooltip(m.name+' 옵션').onClick(()=>this.plugin.openPluginMenu(m,b.extraSettingsEl,this)));
       s.addToggle(t=>{t.setValue(!!this.app.plugins.plugins[m.id]).setDisabled(store.busy||m.id===this.plugin.manifest.id).onChange(enabled=>run(()=>store.apply(this.editing&&this.checked.has(m.id)?[...this.checked]:[m.id],enabled)));if(m.id===this.plugin.manifest.id)t.toggleEl.setAttribute('aria-label','Performance Manager는 항상 켜짐');else t.toggleEl.title=this.editing&&this.checked.has(m.id)?'선택한 '+this.checked.size+'개 플러그인 함께 켜기·끄기':m.name+' 켜기·끄기';});
     }
@@ -545,7 +575,7 @@ class ManagerSettingTab extends PluginSettingTab{
   display(){this.containerEl.empty();new Setting(this.containerEl).setName('플러그인 관리').setDesc('플러그인을 관리하고, 그룹으로 묶어 일괄 켜거나 끕니다.').addButton(b=>b.setButtonText('플러그인 관리 열기').setCta().onClick(()=>this.plugin.openGroups()));}
 }
 function groupToggle(parent,plugin,group){
-  const ids=group.pluginIds.filter(id=>plugin.app.plugins.manifests[id]&&id!==plugin.manifest.id),active=ids.filter(id=>!!plugin.app.plugins.plugins[id]).length,on=active>0,mixed=on&&active<ids.length;
+  const ids=plugin.groupStore.members(group.id).filter(id=>plugin.app.plugins.manifests[id]&&id!==plugin.manifest.id),active=ids.filter(id=>!!plugin.app.plugins.plugins[id]).length,on=active>0,mixed=on&&active<ids.length;
   const setting=new Setting(parent).addToggle(t=>{
     t.setValue(on).setDisabled(plugin.groupStore.busy||!ids.length);
     t.toggleEl.setAttribute('aria-label',group.name+' 그룹 켜기·끄기');
@@ -619,16 +649,20 @@ class NativeGroups {
       const visibleRows=rows.filter(row=>row.style.display!=='none'&&!row.hidden);
       const launch=root.createDiv({cls:'pm-native-group-launch'});const manage=launch.createEl('button',{text:'플러그인 관리 열기'});manage.onclick=()=>this.plugin.openGroups();
       const grouped=new Set();
-      const addSection=(id,name,members,group)=>{
+      const addSection=(id,name,members,group,parent=root,ownMembers=members)=>{
         if(!members.length)return;
         const revealed=members.some(row=>row.dataset.pluginId===this.revealedPluginId);
-        const d=root.createEl('details',{cls:'pm-native-group',attr:{'data-pm-group-id':id}});d.open=!!query||revealed||!store.collapsed[id];
+        const d=parent.createEl('details',{cls:'pm-native-group',attr:{'data-pm-group-id':id}});d.open=!!query||revealed||!store.collapsed[id];
         const summary=d.createEl('summary');summary.createSpan({text:name+' · '+members.length+'개'});
         if(group){const actions=summary.createSpan({cls:'pm-native-group-actions'});actions.onclick=e=>e.stopPropagation();groupToggle(actions,this.plugin,group);}
-        const body=d.createDiv({cls:'pm-native-group-body'});for(const row of members){grouped.add(row.dataset.pluginId);body.appendChild(row);}
+        const body=d.createDiv({cls:'pm-native-group-body'});for(const row of ownMembers){grouped.add(row.dataset.pluginId);body.appendChild(row);}
         d.ontoggle=()=>{if(!d.isConnected||query)return;if(revealed){if(d.open)return;this.revealedPluginId=null;}const collapsed=!d.open;if(!!store.collapsed[id]!==collapsed){store.collapsed[id]=collapsed;this.plugin.persist();}};
+        return body;
       };
-      for(const group of store.groups)addSection(group.id,group.name,visibleRows.filter(r=>group.pluginIds.includes(r.dataset.pluginId)),group);
+      for(const group of store.roots()){
+        const body=addSection(group.id,group.name,visibleRows.filter(r=>store.contains(group.id,r.dataset.pluginId)),group,root,visibleRows.filter(r=>group.pluginIds.includes(r.dataset.pluginId)));
+        if(body)for(const child of store.children(group.id))addSection(child.id,child.name,visibleRows.filter(r=>child.pluginIds.includes(r.dataset.pluginId)),child,body);
+      }
       addSection('none','그룹 없음',visibleRows.filter(r=>!grouped.has(r.dataset.pluginId)));
     }finally{
       if(!this.observer)this.observer=new MutationObserver(records=>{if(records.some(r=>r.type==='childList'||r.target.matches?.('[data-plugin-id]')))this.schedule();});

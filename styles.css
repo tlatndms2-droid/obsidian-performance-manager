@@ -65,6 +65,13 @@
 .pm-group-nav-item.is-selected .pm-group-select{color:var(--text-accent)}
 .pm-group-counts{display:block;margin-top:4px;font-size:var(--font-ui-smaller);font-weight:normal;color:var(--text-muted)}
 .pm-group-active-count{color:var(--text-accent)}
+.pm-group-heading{display:flex;align-items:flex-start;min-width:0}
+.pm-group-heading .pm-group-select{flex:1;min-width:0}
+.pm-group-heading .pm-group-fold{flex:none;box-shadow:none;background:transparent;border:0;padding:5px 2px;width:20px;min-height:30px;cursor:pointer}
+.pm-group-tree-children{margin-left:14px;padding-left:10px;border-left:1px solid var(--background-modifier-border)}
+.pm-group-nest-target{outline:2px solid var(--interactive-accent);outline-offset:-2px;background:var(--background-modifier-hover)}
+.pm-group-breadcrumb{font-size:var(--font-ui-small);color:var(--text-muted);padding-bottom:4px;border-bottom:1px solid var(--background-modifier-border)}
+.pm-native-group-body>.pm-native-group{margin-left:16px;border-left:1px solid var(--background-modifier-border);padding-left:8px}
 .pm-group-nav-item[data-pm-group-order-id]{position:relative}
 .pm-group-nav-item[data-pm-group-order-id] .pm-group-select{cursor:grab}
 .pm-group-order-dragging{opacity:.45}

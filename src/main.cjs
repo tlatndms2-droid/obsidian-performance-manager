@@ -88,6 +88,8 @@ module.exports=class PerformanceManager extends Plugin {
       onFinish:async result=>{this.last=result;await this.persist();this.refresh();}
     });
     this.addRibbonIcon('gauge','플러그인 처리 시간',()=>this.openResults());
+    this.overlayRibbon=this.addRibbonIcon('picture-in-picture-2','성능 오버레이 열기 / 숨기기',()=>this.toggleOverlay());
+    this.addCommand({id:'toggle-performance-overlay',name:'성능 오버레이 열기 / 숨기기',callback:()=>this.toggleOverlay()});
     addIcon('pm-plugin-manager','<g transform="scale(4.166667)" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 9V5a1 1 0 0 0-1-1h-3a2.5 2.5 0 1 0-5 0H3a1 1 0 0 0-1 1v3a2.5 2.5 0 1 1 0 5v4a1 1 0 0 0 1 1h3a2.5 2.5 0 1 1 5 0h1"/><path d="m16.8 12.5 .4-1h1.6l.4 1 1 .4 1-.4 1.1 1.1-.4 1 .4 1 1 .4v1.6l-1 .4-.4 1 .4 1-1.1 1.1-1-.4-1 .4-.4 1h-1.6l-.4-1-1-.4-1 .4-1.1-1.1.4-1-.4-1-1-.4V16l1-.4.4-1-.4-1 1.1-1.1 1 .4z" transform="translate(0 1)"/><circle cx="18" cy="18" r="1.7"/></g>');
     this.addRibbonIcon('pm-plugin-manager','플러그인 관리',()=>this.openGroups());
     this.addCommand({id:'open-plugin-groups',name:'플러그인 관리',callback:()=>this.openGroups()});
@@ -125,6 +127,7 @@ module.exports=class PerformanceManager extends Plugin {
     if(!settings.pluginTabs?.some(t=>t.id===manifest.id)&&!Object.keys(this.app.commands.commands).some(id=>id.startsWith(manifest.id+':')))menu.addItem(i=>i.setTitle('설정·단축키가 없는 플러그인입니다').setDisabled(true));
     const rect=anchor.getBoundingClientRect();menu.showAtPosition({x:rect.left,y:rect.bottom});
   }
+  toggleOverlay(){this.overlaySettings.shown=!this.overlaySettings.shown;this.overlays.sync();this.persist();}
   refreshOverlays(){this.overlays?.render();}
   refresh(){for(const modal of this.modals)modal.render();this.refreshOverlays();}
   openResults(){if(this.modals.size){[...this.modals][0].render();return;}new RuntimeModal(this.app,this).open();}

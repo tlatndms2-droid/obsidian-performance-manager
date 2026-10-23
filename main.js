@@ -1,4 +1,4 @@
-/* Performance Manager 0.2.8 */
+/* Performance Manager 0.2.9 */
 (function(nativeRequire){
 const factories={"./profile.cjs": function(module,exports,require){
 const SYSTEM = new Set(['(idle)', '(program)', '(root)', '(garbage collector)']);
@@ -168,7 +168,6 @@ module.exports={Recorder,INTERVAL_US,CHUNK_MS,MAX_MS};
 
 },
 "./overlay.cjs": function(module,exports,require){
-const {setIcon}=require('obsidian');
 const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
 function fitBox(box={},width,height){
   const maxW=Math.max(1,width-16),maxH=Math.max(1,height-16);
@@ -183,13 +182,10 @@ function resizeBox(box,dx,dy,width,height){
   return fitBox({...box,x,w:right-x,h:box.h+dy},width,height);
 }
 
-class CanvasOverlay {
-  constructor(plugin,view,wrapper,controls){
-    Object.assign(this,{plugin,view,wrapper});this.cleanups=[];
-    this.group=controls.createDiv({cls:'canvas-control-group mod-raised pm-overlay-control'});
-    this.toggle=this.group.createEl('button',{cls:'canvas-control-item pm-overlay-toggle',attr:{'aria-label':'성능 오버레이 열기 / 숨기기','aria-pressed':'false'}});
-    setIcon(this.toggle,'gauge');this.toggle.onclick=()=>{plugin.overlaySettings.shown=!plugin.overlaySettings.shown;plugin.refreshOverlays();plugin.persist();};
-    this.root=wrapper.createDiv({cls:'pm-canvas-overlay',attr:{'aria-label':'성능 오버레이'}});
+class WindowOverlay {
+  constructor(plugin,doc){
+    Object.assign(this,{plugin,doc,wrapper:doc.documentElement});this.cleanups=[];
+    this.root=doc.body.createDiv({cls:'pm-window-overlay',attr:{'aria-label':'성능 오버레이'}});
     this.handle=this.root.createEl('button',{cls:'pm-overlay-drag',attr:{'aria-label':'성능 오버레이 위치 이동','title':'드래그로 이동 · 방향키로 이동'}});this.handle.createSpan();
     this.list=this.root.createDiv({cls:'pm-overlay-list'});
     this.footer=this.root.createDiv({cls:'pm-overlay-footer'});
@@ -200,7 +196,7 @@ class CanvasOverlay {
       const stop=e=>e.stopPropagation();this.root.addEventListener(name,stop);this.cleanups.push(()=>this.root.removeEventListener(name,stop));
     }
     this.bindDrag(this.handle,false);this.bindDrag(this.resize,true);
-    this.observer=new ResizeObserver(()=>{if(!this.gesture)this.layout();});this.observer.observe(wrapper);
+    this.observer=new doc.defaultView.ResizeObserver(()=>{if(!this.gesture)this.layout();});this.observer.observe(this.wrapper);
     this.render();
   }
   layout(){
@@ -231,8 +227,7 @@ class CanvasOverlay {
     for(const [name,fn] of [['pointerdown',down],['pointermove',move],['pointerup',end],['pointercancel',end],['lostpointercapture',end],['keydown',key]]){element.addEventListener(name,fn);this.cleanups.push(()=>element.removeEventListener(name,fn));}
   }
   render(){
-    const shown=!!this.plugin.overlaySettings.shown;this.root.hidden=!shown;this.toggle.setAttribute('aria-pressed',String(shown));
-    this.toggle.classList.toggle('is-active',shown);this.layout();if(!shown)return;
+    const shown=!!this.plugin.overlaySettings.shown;this.root.hidden=!shown;this.layout();if(!shown)return;
     const r=this.plugin.recorder,live=r.state!=='idle';const result=live?r.snapshot():this.plugin.last;
     const total=result?.total;const entries=new Map(this.plugin.catalog().map(p=>[p.id,p]));for(const p of result?.catalog||[])entries.set(p.id,p);
     const rows=[...entries.values()].sort((a,b)=>(total?.plugins[b.id]?.ms||0)-(total?.plugins[a.id]?.ms||0)||a.name.localeCompare(b.name,'ko'));
@@ -250,23 +245,24 @@ class CanvasOverlay {
     if(error)this.list.createDiv({cls:'pm-overlay-error',text:error,attr:{role:'alert'}});
     this.root.setAttribute('title','처리 시간 추정치 · 약 10초마다 갱신 · 숨겨도 측정은 유지');
   }
-  destroy(){this.observer.disconnect();for(const fn of this.cleanups)fn();this.group.remove();this.root.remove();}
+  destroy(){this.observer.disconnect();for(const fn of this.cleanups)fn();this.root.remove();}
 }
 
 class OverlayManager {
-  constructor(plugin){this.plugin=plugin;this.items=new Map();this.pending=new Map();}
+  constructor(plugin){this.plugin=plugin;this.item=null;}
   sync(){
-    const views=new Set(this.plugin.app.workspace.getLeavesOfType('canvas').map(l=>l.view));
-    for(const [view,item] of this.items)if(!views.has(view)||!item.wrapper.isConnected||!item.group.isConnected){item.destroy();this.items.delete(view);}
-    for(const [view,observer] of this.pending)if(!views.has(view)){observer.disconnect();this.pending.delete(view);}
-    for(const view of views){
-      if(this.items.has(view))continue;
-      const attach=()=>{const wrapper=view.containerEl.querySelector('.canvas-wrapper'),controls=wrapper?.querySelector('.canvas-controls');if(!controls)return false;this.pending.get(view)?.disconnect();this.pending.delete(view);this.items.set(view,new CanvasOverlay(this.plugin,view,wrapper,controls));return true;};
-      if(!attach()&&!this.pending.has(view)){const observer=new MutationObserver(()=>attach());observer.observe(view.containerEl,{childList:true,subtree:true});this.pending.set(view,observer);}
-    }
+    // Attach to the app document, never to a leaf: splits and tab changes share one overlay.
+    const doc=this.plugin.app.workspace.containerEl.ownerDocument;
+    if(this.item&&(!this.item.root.isConnected||this.item.doc!==doc)){this.item.destroy();this.item=null;}
+    if(!this.item&&doc.body)this.item=new WindowOverlay(this.plugin,doc);
+    this.render();
   }
-  render(){for(const item of this.items.values())item.render();}
-  destroy(){for(const item of this.items.values())item.destroy();for(const observer of this.pending.values())observer.disconnect();this.items.clear();this.pending.clear();}
+  render(){
+    this.item?.render();
+    this.plugin.overlayRibbon?.setAttribute('aria-pressed',String(!!this.plugin.overlaySettings.shown));
+    this.plugin.overlayRibbon?.classList.toggle('is-active',!!this.plugin.overlaySettings.shown);
+  }
+  destroy(){this.item?.destroy();this.item=null;}
 }
 module.exports={OverlayManager,fitBox,dragBox,resizeBox};
 
@@ -769,6 +765,8 @@ module.exports=class PerformanceManager extends Plugin {
       onFinish:async result=>{this.last=result;await this.persist();this.refresh();}
     });
     this.addRibbonIcon('gauge','플러그인 처리 시간',()=>this.openResults());
+    this.overlayRibbon=this.addRibbonIcon('picture-in-picture-2','성능 오버레이 열기 / 숨기기',()=>this.toggleOverlay());
+    this.addCommand({id:'toggle-performance-overlay',name:'성능 오버레이 열기 / 숨기기',callback:()=>this.toggleOverlay()});
     addIcon('pm-plugin-manager','<g transform="scale(4.166667)" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 9V5a1 1 0 0 0-1-1h-3a2.5 2.5 0 1 0-5 0H3a1 1 0 0 0-1 1v3a2.5 2.5 0 1 1 0 5v4a1 1 0 0 0 1 1h3a2.5 2.5 0 1 1 5 0h1"/><path d="m16.8 12.5 .4-1h1.6l.4 1 1 .4 1-.4 1.1 1.1-.4 1 .4 1 1 .4v1.6l-1 .4-.4 1 .4 1-1.1 1.1-1-.4-1 .4-.4 1h-1.6l-.4-1-1-.4-1 .4-1.1-1.1.4-1-.4-1-1-.4V16l1-.4.4-1-.4-1 1.1-1.1 1 .4z" transform="translate(0 1)"/><circle cx="18" cy="18" r="1.7"/></g>');
     this.addRibbonIcon('pm-plugin-manager','플러그인 관리',()=>this.openGroups());
     this.addCommand({id:'open-plugin-groups',name:'플러그인 관리',callback:()=>this.openGroups()});
@@ -806,6 +804,7 @@ module.exports=class PerformanceManager extends Plugin {
     if(!settings.pluginTabs?.some(t=>t.id===manifest.id)&&!Object.keys(this.app.commands.commands).some(id=>id.startsWith(manifest.id+':')))menu.addItem(i=>i.setTitle('설정·단축키가 없는 플러그인입니다').setDisabled(true));
     const rect=anchor.getBoundingClientRect();menu.showAtPosition({x:rect.left,y:rect.bottom});
   }
+  toggleOverlay(){this.overlaySettings.shown=!this.overlaySettings.shown;this.overlays.sync();this.persist();}
   refreshOverlays(){this.overlays?.render();}
   refresh(){for(const modal of this.modals)modal.render();this.refreshOverlays();}
   openResults(){if(this.modals.size){[...this.modals][0].render();return;}new RuntimeModal(this.app,this).open();}

@@ -63,6 +63,8 @@
 .pm-group-nav-item.is-selected{background:var(--background-modifier-hover)}
 .pm-group-nav-item .pm-group-select{display:block;width:100%;height:auto;min-height:30px;text-align:left;white-space:normal;overflow-wrap:anywhere;padding:5px 8px;background:transparent;box-shadow:none;border:0;color:var(--text-normal)}
 .pm-group-nav-item.is-selected .pm-group-select{color:var(--text-accent)}
+.pm-group-counts{display:block;margin-top:4px;font-size:var(--font-ui-smaller);font-weight:normal;color:var(--text-muted)}
+.pm-group-active-count{color:var(--text-accent)}
 .pm-group-nav-actions{display:flex;gap:5px;padding:3px 8px}
 .pm-group-nav-actions button{font-size:var(--font-ui-smaller);height:25px;padding:3px 8px}
 .pm-group-create{margin:18px 5px 0;max-width:calc(100% - 10px)}
@@ -107,7 +109,6 @@
 .pm-group-toggle-setting .setting-item-info{display:none}
 .pm-group-toggle-setting .setting-item-control{padding:0}
 .pm-toggle-mixed{background:color-mix(in srgb,var(--interactive-accent) 45%,var(--background-modifier-border))!important}
-.pm-toggle-mixed:after{transform:translateX(8px)!important}
 .pm-group-picker{width:400px;max-width:90vw}
 .pm-group-picker-list{max-height:45vh;overflow:auto;margin-top:10px}
 .pm-picker-option{display:block;width:100%;margin:4px 0;text-align:left;box-shadow:none;background:transparent}

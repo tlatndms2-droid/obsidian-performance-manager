@@ -97,7 +97,7 @@ module.exports=class PerformanceManager extends Plugin {
     this.addCommand({id:'stop-plugin-runtime',name:'플러그인 처리 시간 측정 종료',callback:()=>this.stop()});
     this.overlays=new OverlayManager(this);
     this.nativeGroups=new NativeGroups(this);
-    this.app.workspace.onLayoutReady(()=>{if(this._loaded){this.overlays.sync();this.nativeGroups.install();this.groupStore.recover().catch(e=>new Notice(String(e.message||e)));}});
+    this.app.workspace.onLayoutReady(()=>{if(this._loaded){this.overlays.sync();this.nativeGroups.install();this.groupStore.recover().then(()=>this.groupStore.initializeMemory()).catch(e=>new Notice(String(e.message||e)));}});
     this.registerEvent(this.app.workspace.on('layout-change',()=>this.overlays.sync()));
     this.registerEvent(this.app.workspace.on('active-leaf-change',()=>this.overlays.sync()));
     this.register(()=>{this.recorder.dispose();this.overlays.destroy();this.nativeGroups.destroy();for(const modal of [...this.modals,...this.groupModals])modal.close();});
